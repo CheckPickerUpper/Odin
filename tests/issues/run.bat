@@ -43,6 +43,7 @@ set ODIN=..\..\..\odin
 %ODIN% check "..\test_issue_7260" -no-entry-point %COMMON% || exit /b
 %ODIN% check "..\test_issue_7304" %COMMON% 2>&1 | find /c "9223372036854775808 is not representable by int" | findstr /x "1" || exit /b
 %ODIN% check "..\test_issue_7336" -no-entry-point %COMMON% || exit /b
+%ODIN% check "..\test_issue_escape_nested_call_results" -no-entry-point %COMMON% || exit /b
 %ODIN% check "..\test_issue_7421_tagged_duplicate" %COMMON% 2>&1 | find /c "Error: Duplicate case" | findstr /x "1" || exit /b
 %ODIN% check "..\test_issue_7429" %COMMON% || exit /b
 %ODIN% check "..\test_issue_7708_mismatch" %COMMON% 2>&1 | find /c "Error:" | findstr /x "2" || exit /b
