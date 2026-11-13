@@ -849,12 +849,14 @@ gb_internal Type *escape_pointee_type(Type *t) {
 	return nullptr;
 }
 
-gb_internal bool escape_too_large(EscapeAnalysis *ea) {
+// `value_facts` is the size of a value not yet stored, e.g. the results of a call
+gb_internal bool escape_too_large(EscapeAnalysis *ea, isize value_facts=0) {
 	enum : isize {
 		MAX_FACT_COUNT  = 1<<13,
 		MAX_STMT_VISITS = 1<<20,
 	};
 	ea->too_large |= ea->state.facts.count + ea->state.outers.count > MAX_FACT_COUNT ||
+	                 value_facts > MAX_FACT_COUNT ||
 	                 ea->stmt_visits > MAX_STMT_VISITS;
 	return ea->too_large;
 }
@@ -3395,6 +3397,11 @@ gb_internal Array<EscapeValue> escape_call(EscapeAnalysis *ea, Ast *call) {
 			}
 			for (EscapeValueFact const &f : v) {
 				escape_value_add(&results[flow.target_index], escape_path_concat(flow.target_path, f.path), f.origin);
+			}
+			// each add compares with every fact so far, and the results of nested calls can double with each,
+			// e.g. `pair(pair(pair(x)))` where `pair` returns `{a = x, b = x}`
+			if (escape_too_large(ea, results[flow.target_index].count)) {
+				return {};
 			}
 			break;
 		}
