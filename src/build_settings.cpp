@@ -1934,7 +1934,7 @@ gb_internal void init_build_context(TargetMetrics *cross_target, Subtarget subta
 		default:
 		case BuildMode_Executable:
 		case BuildMode_StaticLibrary:
-			if ((build_context.command_kind & Command__does_build) != 0) {
+			if (!bc->no_output_files && (build_context.command_kind & Command__does_build) != 0) {
 				gb_printf_err("Unsupported -build-mode for -subtarget:android\n");
 				gb_printf_err("\tCurrently only supporting: \n");
 				// gb_printf_err("\t\texe\n");
@@ -2120,7 +2120,7 @@ gb_internal void init_build_context(TargetMetrics *cross_target, Subtarget subta
 			bc->metrics.target_triplet = concatenate_strings(permanent_allocator(), bc->metrics.target_triplet, bc->minimum_os_version_string);
 		}
 	} else if (selected_subtarget == Subtarget_Android) {
-		init_android_values(bc->build_mode == BuildMode_Executable && (bc->command_kind & Command__does_build) != 0);
+		init_android_values(!bc->no_output_files && bc->build_mode == BuildMode_Executable && (bc->command_kind & Command__does_build) != 0);
 	}
 
 	if (!bc->custom_optimization_level) {
@@ -2353,7 +2353,7 @@ gb_internal bool init_build_paths(String init_filename) {
 	bc->ODIN_BUILD_PROJECT_NAME = build_project_name;
 
 	bool produces_output_file = false;
-	if (bc->command_kind == Command_doc && bc->cmd_doc_flags & CmdDocFlag_DocFormat) {
+	if (bc->generate_docs && (bc->cmd_doc_flags & CmdDocFlag_DocFormat)) {
 		produces_output_file = true;
 	} else if (bc->command_kind & Command__does_build) {
 		produces_output_file = true;
@@ -2385,7 +2385,7 @@ gb_internal bool init_build_paths(String init_filename) {
 			}
 		}
 
-		if ((bc->command_kind & Command__does_build) && (!bc->ignore_microsoft_magic)) {
+		if (!bc->no_output_files && (bc->command_kind & Command__does_build) && (!bc->ignore_microsoft_magic)) {
 			// NOTE(ic): It would be nice to extend this so that we could specify the Visual Studio version that we want instead of defaulting to the latest.
 			Find_Result find_result = find_visual_studio_and_windows_sdk();
 
@@ -2434,7 +2434,7 @@ gb_internal bool init_build_paths(String init_filename) {
 	// All the build targets and OSes.
 	String output_extension;
 
-	if (bc->command_kind == Command_doc && bc->cmd_doc_flags & CmdDocFlag_DocFormat) {
+	if (bc->generate_docs && (bc->cmd_doc_flags & CmdDocFlag_DocFormat)) {
 		output_extension = STR_LIT("odin-doc");
 	} else if (is_arch_wasm()) {
 		output_extension = STR_LIT("wasm");
@@ -2491,28 +2491,30 @@ gb_internal bool init_build_paths(String init_filename) {
 		String output_file = path_to_string(ha, bc->build_paths[BuildPath_Output]);
 		defer (gb_free(ha, output_file.text));
 
-		// NOTE(Jeroen): For LLVM-IR, we want `-out` to specify a directory.
-		//               For other outputs we expect it to be a file path.
-		if (build_context.build_mode == BuildMode_LLVM_IR) {
-			if (!output_is_directory) {
-				gb_printf_err("Output path %.*s should be a directory for LLVM-IR output.\n", LIT(output_file));
-				return false;
-			}
-			output_should_be_directory = true;
+		if (!bc->no_output_files) {
+			// NOTE(Jeroen): For LLVM-IR, we want `-out` to specify a directory.
+			//               For other outputs we expect it to be a file path.
+			if (build_context.build_mode == BuildMode_LLVM_IR) {
+				if (!output_is_directory) {
+					gb_printf_err("Output path %.*s should be a directory for LLVM-IR output.\n", LIT(output_file));
+					return false;
+				}
+				output_should_be_directory = true;
 
-		} else if (build_context.build_mode == BuildMode_Object) {
-			// Both directory or filename prefix allowed
+			} else if (build_context.build_mode == BuildMode_Object) {
+				// Both directory or filename prefix allowed
 
-		} else if (build_context.build_mode == BuildMode_Assembly) {
-			// Both directory or filename prefix allowed
+			} else if (build_context.build_mode == BuildMode_Assembly) {
+				// Both directory or filename prefix allowed
 
-		} else if (build_context.metrics.os == TargetOs_windows) {
-			if (output_is_directory) {
-				gb_printf_err("Output path %.*s is a directory.\n", LIT(output_file));
-				return false;
-			} else if (bc->build_paths[BuildPath_Output].ext.len == 0) {
-				gb_printf_err("Output path %.*s must have an appropriate extension.\n", LIT(output_file));
-				return false;
+			} else if (build_context.metrics.os == TargetOs_windows) {
+				if (output_is_directory) {
+					gb_printf_err("Output path %.*s is a directory.\n", LIT(output_file));
+					return false;
+				} else if (bc->build_paths[BuildPath_Output].ext.len == 0) {
+					gb_printf_err("Output path %.*s must have an appropriate extension.\n", LIT(output_file));
+					return false;
+				}
 			}
 		}
 	} else {

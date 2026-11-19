@@ -460,7 +460,7 @@ gb_internal void export_semantics(Checker *c) {
 				continue;
 			}
 			if (build_context.export_semantics_for.count == 0) {
-				exported[f->id] = pkg->kind == Package_Init || pkg->is_extra;
+				exported[f->id] = (build_context.cmd_doc_flags & CmdDocFlag_AllPackages) || pkg->kind == Package_Init || pkg->is_extra;
 				continue;
 			}
 			for (String const &path : build_context.export_semantics_for) {
