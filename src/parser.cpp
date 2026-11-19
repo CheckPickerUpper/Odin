@@ -7810,7 +7810,7 @@ gb_internal ParseFileError parse_packages(Parser *p, String init_filename) {
 		if (path[path.len-1] == '/') {
 			path.len -= 1;
 		}
-		if ((build_context.command_kind & Command__does_build) &&
+		if (!build_context.no_output_files && (build_context.command_kind & Command__does_build) &&
 		    build_context.build_mode == BuildMode_Executable) {
 			String output_path = path_to_string(temporary_allocator(), build_context.build_paths[8]);
 			if (path_is_directory(output_path)) {

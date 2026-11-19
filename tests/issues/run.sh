@@ -555,6 +555,23 @@ $ODIN check ../test_pr_7848/pkg_b ../test_pr_7848/pkg_a -no-entry-point -workspa
 cmp pr_7848.cbor pr_7848_again.cbor
 $ODIN test ../test_pr_7848 $COMMON
 
+DOC_TEST_FLAGS="-vet-packages:doc_test_primary,dependency,test_doc_test_context -vet-cast -vet-using-param -vet-unused-procedures -disallow-do -warnings-as-errors"
+$ODIN doc ../test_doc_test_context/primary -doc-format -all-packages -out:production -export-semantics:cbor -export-semantics-file:production.cbor $COMMON_CHECK $DOC_TEST_FLAGS
+$ODIN test ../test_doc_test_context/primary -doc-format -all-packages -export-semantics:cbor -export-semantics-file:primary.cbor $COMMON_CHECK $DOC_TEST_FLAGS
+$ODIN test ../test_doc_test_context/primary -doc-format -all-packages -target:windows_amd64 -out:test_windows -export-semantics:cbor -export-semantics-file:test_windows.cbor $COMMON_CHECK $DOC_TEST_FLAGS
+$ODIN test ../test_doc_test_context/primary -all-packages -target:darwin_arm64 -out:test_darwin -export-semantics:cbor -export-semantics-file:test_darwin.cbor -doc-format $COMMON_CHECK $DOC_TEST_FLAGS
+DOC_TEST_UNUSED_STATUS=0
+$ODIN test ../test_doc_test_context/primary -doc-format -all-packages -define:DOC_TEST_UNUSED=true -out:test_unused $COMMON_CHECK $DOC_TEST_FLAGS > doc_test_unused.txt 2>&1 || DOC_TEST_UNUSED_STATUS=$?
+if [[ $DOC_TEST_UNUSED_STATUS -eq 1 &&
+      $(grep -c "Error:" doc_test_unused.txt) -eq 1 &&
+      $(grep -Ec "Error: 'unused_helper' declared but not used[[:space:]]*$" doc_test_unused.txt) -eq 1 ]]; then
+	echo "SUCCESSFUL 1/1"
+else
+	cat doc_test_unused.txt
+	exit 1
+fi
+$ODIN test ../test_doc_test_context $COMMON $DOC_TEST_FLAGS
+
 if [[ -z ${ODIN_TESTS_NO_CLANG+x} ]]; then
 	clang -c ../test_issue_7010/test_issue_7010.c -o test_issue_7010_c.o
 	$ODIN test ../test_issue_7010 $COMMON

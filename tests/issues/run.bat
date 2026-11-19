@@ -193,6 +193,20 @@ set DEFINE_ERRORS=-define:DEFINE_NOT_A_NUMBER=abc -define:DEFINE_OUT_OF_RANGE=25
 fc /b pr_7848.cbor pr_7848_again.cbor > nul || exit /b
 %ODIN% test "..\test_pr_7848" %COMMON% || exit /b
 
+set DOC_TEST_FLAGS=-vet-packages:doc_test_primary,dependency,test_doc_test_context -vet-cast -vet-using-param -vet-unused-procedures -disallow-do -warnings-as-errors
+%ODIN% doc "..\test_doc_test_context\primary" -doc-format -all-packages -out:production -export-semantics:cbor -export-semantics-file:production.cbor %COMMON% %DOC_TEST_FLAGS% || exit /b
+%ODIN% test "..\test_doc_test_context\primary" -doc-format -all-packages -export-semantics:cbor -export-semantics-file:primary.cbor %COMMON% %DOC_TEST_FLAGS% || exit /b
+%ODIN% test "..\test_doc_test_context\primary" -doc-format -all-packages -target:windows_amd64 -out:test_windows -export-semantics:cbor -export-semantics-file:test_windows.cbor %COMMON% %DOC_TEST_FLAGS% || exit /b
+%ODIN% test "..\test_doc_test_context\primary" -all-packages -target:darwin_arm64 -out:test_darwin -export-semantics:cbor -export-semantics-file:test_darwin.cbor -doc-format %COMMON% %DOC_TEST_FLAGS% || exit /b
+%ODIN% test "..\test_doc_test_context\primary" -doc-format -all-packages -define:DOC_TEST_UNUSED=true -out:test_unused %COMMON% %DOC_TEST_FLAGS% > doc_test_unused.txt 2>&1
+@if !ERRORLEVEL! neq 1 (
+	type doc_test_unused.txt
+	exit /b 1
+)
+type doc_test_unused.txt | find /c "Error:" | findstr /x "1" || exit /b
+type doc_test_unused.txt | findstr /r /c:"Error: 'unused_helper' declared but not used *$" | find /c "Error:" | findstr /x "1" || exit /b
+%ODIN% test "..\test_doc_test_context" %COMMON% %DOC_TEST_FLAGS% || exit /b
+
 @rem It seems at this point 7010 is not for Windows.
 @rem @if "%ODIN_TESTS_NO_CLANG%" == "" (
 @rem 	clang -c "..\test_issue_7010\test_issue_7010.c" -o test_issue_7010_c.o || exit /b

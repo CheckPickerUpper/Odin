@@ -668,9 +668,9 @@ gb_internal bool parse_build_flags(Array<String> args) {
 	add_flag(&build_flags, BuildFlag_ExportDefineables,       str_lit("export-defineables"),        BuildFlagParam_String,  Command__does_check);
 	add_flag(&build_flags, BuildFlag_Overlay,                 str_lit("overlay"),                   BuildFlagParam_String,  Command__does_check);
 	add_flag(&build_flags, BuildFlag_Workspace,               str_lit("workspace"),                 BuildFlagParam_None,    Command_check);
-	add_flag(&build_flags, BuildFlag_ExportSemantics,         str_lit("export-semantics"),          BuildFlagParam_String,  Command_check);
-	add_flag(&build_flags, BuildFlag_ExportSemanticsFile,     str_lit("export-semantics-file"),     BuildFlagParam_String,  Command_check);
-	add_flag(&build_flags, BuildFlag_ExportSemanticsFor,      str_lit("export-semantics-for"),      BuildFlagParam_String,  Command_check, true);
+	add_flag(&build_flags, BuildFlag_ExportSemantics,         str_lit("export-semantics"),          BuildFlagParam_String,  Command_check | Command_doc | Command_test);
+	add_flag(&build_flags, BuildFlag_ExportSemanticsFile,     str_lit("export-semantics-file"),     BuildFlagParam_String,  Command_check | Command_doc | Command_test);
+	add_flag(&build_flags, BuildFlag_ExportSemanticsFor,      str_lit("export-semantics-for"),      BuildFlagParam_String,  Command_check | Command_doc | Command_test, true);
 	add_flag(&build_flags, BuildFlag_IgnoreUnusedDefineables, str_lit("ignore-unused-defineables"), BuildFlagParam_None,    Command__does_check);
 
 	add_flag(&build_flags, BuildFlag_Vet,                     str_lit("vet"),                       BuildFlagParam_None,    Command__does_check);
@@ -724,7 +724,7 @@ gb_internal bool parse_build_flags(Array<String> args) {
 	add_flag(&build_flags, BuildFlag_Short,                   str_lit("short"),                     BuildFlagParam_None,    Command_doc);
 	add_flag(&build_flags, BuildFlag_InSourceOrder,           str_lit("in-source-order"),           BuildFlagParam_None,    Command_doc);
 	add_flag(&build_flags, BuildFlag_AllPackages,             str_lit("all-packages"),              BuildFlagParam_None,    Command_doc | Command_test | Command_build);
-	add_flag(&build_flags, BuildFlag_DocFormat,               str_lit("doc-format"),                BuildFlagParam_None,    Command_doc);
+	add_flag(&build_flags, BuildFlag_DocFormat,               str_lit("doc-format"),                BuildFlagParam_None,    Command_doc | Command_test);
 
 	add_flag(&build_flags, BuildFlag_IgnoreWarnings,          str_lit("ignore-warnings"),           BuildFlagParam_None,    Command_all);
 	add_flag(&build_flags, BuildFlag_WarningsAsErrors,        str_lit("warnings-as-errors"),        BuildFlagParam_None,    Command_all);
@@ -1715,6 +1715,8 @@ gb_internal bool parse_build_flags(Array<String> args) {
 							break;
 						case BuildFlag_DocFormat:
 							build_context.cmd_doc_flags |= CmdDocFlag_DocFormat;
+							build_context.generate_docs = true;
+							build_context.no_output_files = true;
 							break;
 						case BuildFlag_IgnoreWarnings: {
 							if (build_context.warnings_as_errors) {
@@ -3083,9 +3085,12 @@ gb_internal int print_show_help(String const arg0, String command, String option
 	}
 
 
-	if (doc) {
+	if (doc || test_only) {
 		if (print_flag("-doc-format")) {
 			print_usage_line(2, "Generates documentation as the .odin-doc format (useful for external tooling).");
+			if (test_only) {
+				print_usage_line(2, "Exports test-context documentation without running tests.");
+			}
 		}
 	}
 
@@ -3121,11 +3126,14 @@ gb_internal int print_show_help(String const arg0, String command, String option
 		}
 	}
 
-	if (check_only) {
+	if (command == "check" || doc || test_only) {
 		if (print_flag("-export-semantics:<format>")) {
 			print_usage_line(2, "Exports what each identifier refers to, its entity's kind, type, and definition, for editors and other tools.");
 			print_usage_line(2, "Also exports type layouts and the branches of 'when' statements not taken. Requires `-export-semantics-file`.");
 			print_usage_line(2, "It covers the packages named on the command line, or only the files given with `-export-semantics-for`.");
+			if (doc || test_only) {
+				print_usage_line(2, "With -all-packages, includes all imported packages.");
+			}
 			print_usage_line(2, "It is written once type checking finishes, even with type errors, but not when the errors reach `-max-error-count`.");
 			print_usage_line(2, "Tools should raise that, and remove the file before each run, as a previous one is otherwise left in place.");
 			print_usage_line(2, "Available options:");
@@ -4531,7 +4539,7 @@ int main(int arg_count, char const **arg_ptr) {
 	// }
 
 #if !defined(GB_SYSTEM_WINDOWS)
-	if (build_context.metrics.os == TargetOs_windows && build_context.windows_sdk_root.len == 0 &&
+	if (!build_context.no_output_files && build_context.metrics.os == TargetOs_windows && build_context.windows_sdk_root.len == 0 &&
 	    (build_context.command_kind & Command__does_build) != 0) {
 		switch (build_context.build_mode) {
 		case BuildMode_Executable:
