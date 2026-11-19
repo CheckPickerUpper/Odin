@@ -3273,6 +3273,7 @@ gb_internal void collect_testing_procedures_of_package(Checker *c, AstPackage *p
 		}
 
 		if (is_tester) {
+			e->flags |= EntityFlag_Used;
 			add_dependency_to_set(c, e);
 			array_add(&c->info.testing_procedures, e);
 		}
@@ -8284,24 +8285,20 @@ gb_internal void check_parsed_files(Checker *c) {
 
 	ThreadPoolChunks<Entity *> cycle_checks = {};
 	{
-		// NOTE(bill): Since both only read what the procedure bodies left they can run alongside the stages below
-		// and are waited for only before what changes that
-		//
-		// When started after the graph's nodes (which then have every thread)
-		TIME_SECTION("start scope usages and type and inline cycles");
-		TaskGroup scope_usages = {};
-		start_check_all_scope_usages(c, &scope_usages);
+		TIME_SECTION("start type and inline cycles");
 		thread_pool_start_chunks(&cycle_checks, c->info.definitions.data, c->info.definitions.count, 1024, check_for_type_and_inline_cycles);
 
 		// NOTE: after them, as it is waited for last, so they are taken first
 		TIME_SECTION("start global init order");
 		start_calculate_global_init_order(&graph, &c->info);
 
-		TIME_SECTION("wait for scope usages");
-		thread_pool_wait(&scope_usages);
-
 		TIME_SECTION("generate minimum dependency set");
 		generate_minimum_dependency_set(c, c->info.entry_point);
+
+		TIME_SECTION("check scope usages");
+		TaskGroup scope_usages = {};
+		start_check_all_scope_usages(c, &scope_usages);
+		thread_pool_wait(&scope_usages);
 	}
 
 	// Hashed alongside the stages below, as only the type info array reads the hashes
