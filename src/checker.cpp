@@ -8069,15 +8069,18 @@ gb_internal WORKER_TASK_PROC(check_scope_usage_pkg_worker) {
 
 
 
-gb_internal void start_check_all_scope_usages(Checker *c, TaskGroup *group) {
+gb_internal void check_all_scope_usages(Checker *c) {
+	TIME_SECTION("check scope usages");
+	TaskGroup group = {};
 	for (auto const &entry : c->info.files) {
 		AstFile *f = entry.value;
-		thread_pool_add_task(group, check_scope_usage_file_worker, f);
+		thread_pool_add_task(&group, check_scope_usage_file_worker, f);
 	}
 	for (auto const &entry : c->info.packages) {
 		AstPackage *pkg = entry.value;
-		thread_pool_add_task(group, check_scope_usage_pkg_worker, pkg);
+		thread_pool_add_task(&group, check_scope_usage_pkg_worker, pkg);
 	}
+	thread_pool_wait(&group);
 }
 
 
@@ -8274,10 +8277,9 @@ gb_internal void check_parsed_files(Checker *c) {
 		TIME_SECTION("generate minimum dependency set");
 		generate_minimum_dependency_set(c, c->info.entry_point);
 
-		TIME_SECTION("check scope usages");
-		TaskGroup scope_usages = {};
-		start_check_all_scope_usages(c, &scope_usages);
-		thread_pool_wait(&scope_usages);
+		if (!generates_native_documentation(&build_context)) {
+			check_all_scope_usages(c);
+		}
 	}
 
 	// Hashed alongside the stages below, as only the type info array reads the hashes

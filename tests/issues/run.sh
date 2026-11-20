@@ -400,13 +400,52 @@ $ODIN test ../test_doc_test_context/primary -doc-format -all-packages -export-se
 $ODIN test ../test_doc_test_context/primary -doc-format -all-packages -target:windows_amd64 -out:test_windows -export-semantics:cbor -export-semantics-file:test_windows.cbor $COMMON_CHECK $DOC_TEST_FLAGS
 $ODIN test ../test_doc_test_context/primary -all-packages -target:darwin_arm64 -out:test_darwin -export-semantics:cbor -export-semantics-file:test_darwin.cbor -doc-format $COMMON_CHECK $DOC_TEST_FLAGS
 DOC_TEST_UNUSED_STATUS=0
-$ODIN test ../test_doc_test_context/primary -doc-format -all-packages -define:DOC_TEST_UNUSED=true -out:test_unused $COMMON_CHECK $DOC_TEST_FLAGS > doc_test_unused.txt 2>&1 || DOC_TEST_UNUSED_STATUS=$?
+rm -f test_unused.odin-doc
+$ODIN test ../test_doc_test_context/primary -doc-format -all-packages -define:DOC_TEST_UNUSED=true -out:test_unused -export-semantics:cbor -export-semantics-file:test_unused.cbor $COMMON_CHECK $DOC_TEST_FLAGS > doc_test_unused.txt 2>&1 || DOC_TEST_UNUSED_STATUS=$?
 if [[ $DOC_TEST_UNUSED_STATUS -eq 1 &&
       $(grep -c "Error:" doc_test_unused.txt) -eq 1 &&
       $(grep -Ec "Error: 'unused_helper' declared but not used[[:space:]]*$" doc_test_unused.txt) -eq 1 ]]; then
 	echo "SUCCESSFUL 1/1"
 else
 	cat doc_test_unused.txt
+	exit 1
+fi
+DOC_TEST_PLAIN_STATUS=0
+$ODIN doc ../test_doc_test_context/primary -all-packages -define:DOC_TEST_UNUSED=true $COMMON_CHECK $DOC_TEST_FLAGS > doc_test_plain.out 2> doc_test_plain.txt || DOC_TEST_PLAIN_STATUS=$?
+if [[ $DOC_TEST_PLAIN_STATUS -eq 1 && ! -s doc_test_plain.out &&
+      $(grep -c "Error:" doc_test_plain.txt) -eq 1 &&
+      $(grep -Ec "Error: 'unused_helper' declared but not used[[:space:]]*$" doc_test_plain.txt) -eq 1 ]]; then
+	echo "SUCCESSFUL 1/1"
+else
+	cat doc_test_plain.out doc_test_plain.txt
+	exit 1
+fi
+DOC_TEST_TYPE_ERROR_STATUS=0
+rm -f test_type_error.odin-doc
+$ODIN test ../test_doc_test_context/primary -doc-format -all-packages -define:DOC_TEST_TYPE_ERROR=true -out:test_type_error -export-semantics:cbor -export-semantics-file:test_type_error.cbor $COMMON_CHECK $DOC_TEST_FLAGS > doc_test_type_error.txt 2>&1 || DOC_TEST_TYPE_ERROR_STATUS=$?
+if [[ $DOC_TEST_TYPE_ERROR_STATUS -eq 1 && ! -e test_type_error.odin-doc &&
+      $(grep -c "Error:" doc_test_type_error.txt) -eq 1 ]]; then
+	echo "SUCCESSFUL 1/1"
+else
+	cat doc_test_type_error.txt
+	exit 1
+fi
+DOC_TEST_WRITE_STATUS=0
+rm -f test_limited.odin-doc
+DOC_TEST_WRITE_OUTPUT=$(
+	trap '' XFSZ
+	ulimit -f 0
+	$ODIN doc ../test_doc_test_context/primary -doc-format -all-packages -out:test_limited $COMMON_CHECK $DOC_TEST_FLAGS 2>&1
+) || DOC_TEST_WRITE_STATUS=$?
+printf '%s\n' "$DOC_TEST_WRITE_OUTPUT" > doc_test_write.txt
+if [[ $DOC_TEST_WRITE_STATUS -ne 0 &&
+      $(grep -c "Error:" doc_test_write.txt) -eq 1 &&
+      $(grep -Ec "Error: Failed to write .odin-doc .*requested [1-9][0-9]* bytes, wrote 0 bytes, write success 0" doc_test_write.txt) -eq 1 &&
+      "$DOC_TEST_WRITE_OUTPUT" != *"Wrote .odin-doc file to:"* ]]; then
+	echo "SUCCESSFUL 1/1"
+else
+	printf 'Native document write exited %s\n' "$DOC_TEST_WRITE_STATUS"
+	cat doc_test_write.txt
 	exit 1
 fi
 $ODIN test ../test_doc_test_context $COMMON $DOC_TEST_FLAGS
