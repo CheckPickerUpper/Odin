@@ -1251,11 +1251,19 @@ gb_internal void odin_doc_write_to_file(OdinDocWriter *w, char const *filename) 
 		return;
 	}
 	defer (gb_file_close(&f));
-	if (gb_file_write(&f, w->data, w->data_len)) {
-		err = gb_file_truncate(&f, w->data_len);
-		debugf("Wrote .odin-doc file to: %s\n", filename);
-		gb_printf("Wrote .odin-doc file to: %s\n", filename);
+	isize bytes_written = 0;
+	b32 write_success = gb_file_write_at_check(&f, w->data, w->data_len, 0, &bytes_written);
+	if (!write_success || bytes_written != w->data_len) {
+		error(TokenPos{}, "Failed to write .odin-doc to '%s': requested %td bytes, wrote %td bytes, write success %d", filename, w->data_len, bytes_written, write_success);
+		return;
 	}
+	err = gb_file_truncate(&f, w->data_len);
+	if (err != gbFileError_None) {
+		error(TokenPos{}, "Failed to truncate .odin-doc '%s' to %td bytes: gbFileError %d", filename, w->data_len, err);
+		return;
+	}
+	debugf("Wrote .odin-doc file to: %s\n", filename);
+	gb_printf("Wrote .odin-doc file to: %s\n", filename);
 }
 
 gb_internal void odin_doc_write(CheckerInfo *info, char const *filename) {

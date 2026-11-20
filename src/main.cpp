@@ -3091,6 +3091,7 @@ gb_internal int print_show_help(String const arg0, String command, String option
 			if (test_only) {
 				print_usage_line(2, "Exports test-context documentation without running tests.");
 			}
+			print_usage_line(2, "Native files can be written despite unused or shadowing errors; callers must honor the exit status.");
 		}
 	}
 
@@ -4773,7 +4774,7 @@ int main(int arg_count, char const **arg_ptr) {
 		print_all_errors();
 		return 1;
 	}
-	if (any_warnings()) {
+	if (!generates_native_documentation(&build_context) && any_warnings()) {
 		print_all_errors();
 	}
 
@@ -4803,9 +4804,22 @@ int main(int arg_count, char const **arg_ptr) {
 	if (build_context.generate_docs) {
 		MAIN_TIME_SECTION("generate documentation");
 		if (global_error_collector.count != 0) {
+			print_all_errors();
 			return 1;
 		}
 		generate_documentation(checker);
+
+		if (generates_native_documentation(&build_context)) {
+			check_all_scope_usages(checker);
+
+			if (any_errors()) {
+				print_all_errors();
+				return 1;
+			}
+			if (any_warnings()) {
+				print_all_errors();
+			}
+		}
 
 		if (build_context.show_timings) {
 			show_timings(checker, &global_timings);

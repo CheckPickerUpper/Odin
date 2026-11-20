@@ -198,13 +198,35 @@ set DOC_TEST_FLAGS=-vet-packages:doc_test_primary,dependency,test_doc_test_conte
 %ODIN% test "..\test_doc_test_context\primary" -doc-format -all-packages -export-semantics:cbor -export-semantics-file:primary.cbor %COMMON% %DOC_TEST_FLAGS% || exit /b
 %ODIN% test "..\test_doc_test_context\primary" -doc-format -all-packages -target:windows_amd64 -out:test_windows -export-semantics:cbor -export-semantics-file:test_windows.cbor %COMMON% %DOC_TEST_FLAGS% || exit /b
 %ODIN% test "..\test_doc_test_context\primary" -all-packages -target:darwin_arm64 -out:test_darwin -export-semantics:cbor -export-semantics-file:test_darwin.cbor -doc-format %COMMON% %DOC_TEST_FLAGS% || exit /b
-%ODIN% test "..\test_doc_test_context\primary" -doc-format -all-packages -define:DOC_TEST_UNUSED=true -out:test_unused %COMMON% %DOC_TEST_FLAGS% > doc_test_unused.txt 2>&1
+@if exist test_unused.odin-doc (
+	del /Q test_unused.odin-doc || exit /b
+)
+%ODIN% test "..\test_doc_test_context\primary" -doc-format -all-packages -define:DOC_TEST_UNUSED=true -out:test_unused -export-semantics:cbor -export-semantics-file:test_unused.cbor %COMMON% %DOC_TEST_FLAGS% > doc_test_unused.txt 2>&1
 @if !ERRORLEVEL! neq 1 (
 	type doc_test_unused.txt
 	exit /b 1
 )
 type doc_test_unused.txt | find /c "Error:" | findstr /x "1" || exit /b
 type doc_test_unused.txt | findstr /r /c:"Error: 'unused_helper' declared but not used *$" | find /c "Error:" | findstr /x "1" || exit /b
+%ODIN% doc "..\test_doc_test_context\primary" -all-packages -define:DOC_TEST_UNUSED=true %COMMON% %DOC_TEST_FLAGS% > doc_test_plain.out 2> doc_test_plain.txt
+@if !ERRORLEVEL! neq 1 (
+	type doc_test_plain.out
+	type doc_test_plain.txt
+	exit /b 1
+)
+@for %%F in (doc_test_plain.out) do @if %%~zF neq 0 exit /b 1
+type doc_test_plain.txt | find /c "Error:" | findstr /x "1" || exit /b
+type doc_test_plain.txt | findstr /r /c:"Error: 'unused_helper' declared but not used *$" | find /c "Error:" | findstr /x "1" || exit /b
+@if exist test_type_error.odin-doc (
+	del /Q test_type_error.odin-doc || exit /b
+)
+%ODIN% test "..\test_doc_test_context\primary" -doc-format -all-packages -define:DOC_TEST_TYPE_ERROR=true -out:test_type_error -export-semantics:cbor -export-semantics-file:test_type_error.cbor %COMMON% %DOC_TEST_FLAGS% > doc_test_type_error.txt 2>&1
+@if !ERRORLEVEL! neq 1 (
+	type doc_test_type_error.txt
+	exit /b 1
+)
+@if exist test_type_error.odin-doc exit /b 1
+type doc_test_type_error.txt | find /c "Error:" | findstr /x "1" || exit /b
 %ODIN% test "..\test_doc_test_context" %COMMON% %DOC_TEST_FLAGS% || exit /b
 
 @rem It seems at this point 7010 is not for Windows.

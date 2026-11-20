@@ -718,6 +718,10 @@ struct BuildContext {
 	String windows_sdk_root;
 };
 
+gb_internal bool generates_native_documentation(BuildContext const *build_context) {
+	return build_context->generate_docs && (build_context->cmd_doc_flags & CmdDocFlag_DocFormat);
+}
+
 gb_global BuildContext build_context = {0};
 
 gb_internal bool IS_ODIN_DEBUG(void) {
@@ -2371,7 +2375,7 @@ gb_internal bool init_build_paths(String init_filename) {
 	bc->ODIN_BUILD_PROJECT_NAME = build_project_name;
 
 	bool produces_output_file = false;
-	if (bc->generate_docs && (bc->cmd_doc_flags & CmdDocFlag_DocFormat)) {
+	if (generates_native_documentation(bc)) {
 		produces_output_file = true;
 	} else if (bc->command_kind & Command__does_build) {
 		produces_output_file = true;
@@ -2452,7 +2456,7 @@ gb_internal bool init_build_paths(String init_filename) {
 	// All the build targets and OSes.
 	String output_extension;
 
-	if (bc->generate_docs && (bc->cmd_doc_flags & CmdDocFlag_DocFormat)) {
+	if (generates_native_documentation(bc)) {
 		output_extension = STR_LIT("odin-doc");
 	} else if (is_arch_wasm()) {
 		output_extension = STR_LIT("wasm");

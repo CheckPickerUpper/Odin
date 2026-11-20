@@ -9,3 +9,7 @@ when ODIN_TEST {
 when #config(DOC_TEST_UNUSED, false) {
 	unused_helper :: proc() {}
 }
+
+when #config(DOC_TEST_TYPE_ERROR, false) {
+	invalid_value: int = "not an integer"
+}
