@@ -923,6 +923,14 @@ gb_internal void check_scope_usage(Checker *c, Scope *scope, u64 vet_flags) {
 	}
 }
 
+gb_internal void submit_procedure_scope_usage(Checker *c, Scope *scope, u64 vet_flags) {
+	if (generates_native_documentation(&build_context)) {
+		per_thread_array_add(&c->info.procedure_scope_usage_queue, ProcedureScopeUsageRequest{scope, vet_flags, global_error_context.instantiations.proc});
+		return;
+	}
+	check_scope_usage(c, scope, vet_flags);
+}
+
 
 gb_internal void add_dependency(CheckerInfo *info, DeclInfo *d, Entity *e) {
 	rw_mutex_lock(&d->deps_mutex);
@@ -1766,6 +1774,7 @@ gb_internal void init_checker_info(CheckerInfo *i) {
 	per_thread_array_init(&i->entity_queue,     global_thread_pool.threads.count);
 	i->entities_by_file = true;
 	per_thread_array_init(&i->definition_queue, global_thread_pool.threads.count);
+	per_thread_array_init(&i->procedure_scope_usage_queue, global_thread_pool.threads.count);
 	per_thread_array_init(&i->semantic_ident_queue, global_thread_pool.threads.count);
 	per_thread_array_init(&i->semantic_when_queue,  global_thread_pool.threads.count);
 	per_thread_array_init(&i->semantic_attributes_queue, global_thread_pool.threads.count);
@@ -1807,6 +1816,7 @@ gb_internal void destroy_checker_info(CheckerInfo *i) {
 
 	per_thread_array_destroy(&i->entity_queue);
 	per_thread_array_destroy(&i->definition_queue);
+	per_thread_array_destroy(&i->procedure_scope_usage_queue);
 	per_thread_array_destroy(&i->semantic_ident_queue);
 	per_thread_array_destroy(&i->semantic_when_queue);
 	per_thread_array_destroy(&i->semantic_attributes_queue);
@@ -8052,6 +8062,16 @@ gb_internal void check_sort_init_and_fini_procedures(Checker *c) {
 	remove_neighbouring_duplicate_entires_from_sorted_array(&c->info.fini_procedures);
 }
 
+gb_internal WORKER_TASK_PROC(check_scope_usage_procedure_worker) {
+	Checker *c = global_checker_ptr.load(std::memory_order_relaxed);
+	ProcedureScopeUsageRequest const *request = cast(ProcedureScopeUsageRequest const *)data;
+	ErrorInstantiations previous_instantiations = global_error_context.instantiations;
+	global_error_context.instantiations = {request->instantiation_proc, nullptr};
+	defer (global_error_context.instantiations = previous_instantiations);
+	check_scope_usage(c, request->scope, request->vet_flags);
+	return 0;
+}
+
 gb_internal WORKER_TASK_PROC(check_scope_usage_file_worker) {
 	Checker *c = global_checker_ptr.load(std::memory_order_relaxed);
 	AstFile *f = cast(AstFile *)data;
@@ -8071,7 +8091,14 @@ gb_internal WORKER_TASK_PROC(check_scope_usage_pkg_worker) {
 
 gb_internal void check_all_scope_usages(Checker *c) {
 	TIME_SECTION("check scope usages");
+	auto procedure_requests = array_make<ProcedureScopeUsageRequest>(heap_allocator());
+	defer (array_free(&procedure_requests));
+	per_thread_array_gather(&c->info.procedure_scope_usage_queue, &procedure_requests);
+
 	TaskGroup group = {};
+	for (ProcedureScopeUsageRequest &request : procedure_requests) {
+		thread_pool_add_task(&group, check_scope_usage_procedure_worker, &request);
+	}
 	for (auto const &entry : c->info.files) {
 		AstFile *f = entry.value;
 		thread_pool_add_task(&group, check_scope_usage_file_worker, f);

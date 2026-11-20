@@ -158,7 +158,7 @@ set ODIN=..\..\..\odin
 fc /b pr_7848.cbor pr_7848_again.cbor > nul || exit /b
 %ODIN% test "..\test_pr_7848" %COMMON% || exit /b
 
-set DOC_TEST_FLAGS=-vet-packages:doc_test_primary,dependency,test_doc_test_context -vet-cast -vet-using-param -vet-unused-procedures -disallow-do -warnings-as-errors
+set DOC_TEST_FLAGS=-vet-packages:doc_test_primary,dependency,test_doc_test_context -vet-cast -vet-using-param -vet-unused-procedures -vet-unused-variables -disallow-do -warnings-as-errors
 %ODIN% doc "..\test_doc_test_context\primary" -doc-format -all-packages -out:production -export-semantics:cbor -export-semantics-file:production.cbor %COMMON% %DOC_TEST_FLAGS% || exit /b
 %ODIN% test "..\test_doc_test_context\primary" -doc-format -all-packages -export-semantics:cbor -export-semantics-file:primary.cbor %COMMON% %DOC_TEST_FLAGS% || exit /b
 %ODIN% test "..\test_doc_test_context\primary" -doc-format -all-packages -target:windows_amd64 -out:test_windows -export-semantics:cbor -export-semantics-file:test_windows.cbor %COMMON% %DOC_TEST_FLAGS% || exit /b
@@ -182,6 +182,27 @@ type doc_test_unused.txt | findstr /r /c:"Error: 'unused_helper' declared but no
 @for %%F in (doc_test_plain.out) do @if %%~zF neq 0 exit /b 1
 type doc_test_plain.txt | find /c "Error:" | findstr /x "1" || exit /b
 type doc_test_plain.txt | findstr /r /c:"Error: 'unused_helper' declared but not used *$" | find /c "Error:" | findstr /x "1" || exit /b
+@if exist test_unused_local.odin-doc (
+	del /Q test_unused_local.odin-doc || exit /b
+)
+%ODIN% test "..\test_doc_test_context\primary" -doc-format -all-packages -define:DOC_TEST_UNUSED_LOCAL=true -out:test_unused_local -export-semantics:cbor -export-semantics-file:test_unused_local.cbor %COMMON% %DOC_TEST_FLAGS% > doc_test_unused_local.txt 2>&1
+@if !ERRORLEVEL! neq 1 (
+	type doc_test_unused_local.txt
+	exit /b 1
+)
+type doc_test_unused_local.txt | find /c "Error:" | findstr /x "1" || exit /b
+type doc_test_unused_local.txt | findstr /r /c:"Error: 'unused_local' declared but not used *$" | find /c "Error:" | findstr /x "1" || exit /b
+type doc_test_unused_local.txt | find "instantiated as 'use_local(" > nul || exit /b
+%ODIN% doc "..\test_doc_test_context\primary" -all-packages -define:DOC_TEST_UNUSED_LOCAL=true %COMMON% %DOC_TEST_FLAGS% > doc_test_plain_local.out 2> doc_test_plain_local.txt
+@if !ERRORLEVEL! neq 1 (
+	type doc_test_plain_local.out
+	type doc_test_plain_local.txt
+	exit /b 1
+)
+@for %%F in (doc_test_plain_local.out) do @if %%~zF neq 0 exit /b 1
+type doc_test_plain_local.txt | find /c "Error:" | findstr /x "1" || exit /b
+type doc_test_plain_local.txt | findstr /r /c:"Error: 'unused_local' declared but not used *$" | find /c "Error:" | findstr /x "1" || exit /b
+type doc_test_plain_local.txt | find "instantiated as 'use_local(" > nul || exit /b
 @if exist test_type_error.odin-doc (
 	del /Q test_type_error.odin-doc || exit /b
 )
