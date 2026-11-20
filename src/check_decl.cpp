@@ -2583,7 +2583,7 @@ gb_internal bool check_proc_body(CheckerContext *ctx_, Token token, DeclInfo *de
 	}
 	array_clear(&decl->proc->asm_templates_to_check);
 
-	check_scope_usage(ctx->checker, ctx->scope, check_vet_flags(body));
+	submit_procedure_scope_usage(ctx->checker, ctx->scope, check_vet_flags(body));
 
 	add_deps_from_child_to_parent(decl);
 

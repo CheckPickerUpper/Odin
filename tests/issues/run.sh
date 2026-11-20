@@ -555,7 +555,7 @@ $ODIN check ../test_pr_7848/pkg_b ../test_pr_7848/pkg_a -no-entry-point -workspa
 cmp pr_7848.cbor pr_7848_again.cbor
 $ODIN test ../test_pr_7848 $COMMON
 
-DOC_TEST_FLAGS="-vet-packages:doc_test_primary,dependency,test_doc_test_context -vet-cast -vet-using-param -vet-unused-procedures -disallow-do -warnings-as-errors"
+DOC_TEST_FLAGS="-vet-packages:doc_test_primary,dependency,test_doc_test_context -vet-cast -vet-using-param -vet-unused-procedures -vet-unused-variables -disallow-do -warnings-as-errors"
 $ODIN doc ../test_doc_test_context/primary -doc-format -all-packages -out:production -export-semantics:cbor -export-semantics-file:production.cbor $COMMON_CHECK $DOC_TEST_FLAGS
 $ODIN test ../test_doc_test_context/primary -doc-format -all-packages -export-semantics:cbor -export-semantics-file:primary.cbor $COMMON_CHECK $DOC_TEST_FLAGS
 $ODIN test ../test_doc_test_context/primary -doc-format -all-packages -target:windows_amd64 -out:test_windows -export-semantics:cbor -export-semantics-file:test_windows.cbor $COMMON_CHECK $DOC_TEST_FLAGS
@@ -579,6 +579,29 @@ if [[ $DOC_TEST_PLAIN_STATUS -eq 1 && ! -s doc_test_plain.out &&
 	echo "SUCCESSFUL 1/1"
 else
 	cat doc_test_plain.out doc_test_plain.txt
+	exit 1
+fi
+DOC_TEST_UNUSED_LOCAL_STATUS=0
+rm -f test_unused_local.odin-doc
+$ODIN test ../test_doc_test_context/primary -doc-format -all-packages -define:DOC_TEST_UNUSED_LOCAL=true -out:test_unused_local -export-semantics:cbor -export-semantics-file:test_unused_local.cbor $COMMON_CHECK $DOC_TEST_FLAGS > doc_test_unused_local.txt 2>&1 || DOC_TEST_UNUSED_LOCAL_STATUS=$?
+if [[ $DOC_TEST_UNUSED_LOCAL_STATUS -eq 1 &&
+      $(grep -c "Error:" doc_test_unused_local.txt) -eq 1 &&
+      $(grep -Ec "Error: 'unused_local' declared but not used[[:space:]]*$" doc_test_unused_local.txt) -eq 1 &&
+      $(grep -Fc "instantiated as 'use_local(" doc_test_unused_local.txt) -ge 1 ]]; then
+	echo "SUCCESSFUL 1/1"
+else
+	cat doc_test_unused_local.txt
+	exit 1
+fi
+DOC_TEST_PLAIN_LOCAL_STATUS=0
+$ODIN doc ../test_doc_test_context/primary -all-packages -define:DOC_TEST_UNUSED_LOCAL=true $COMMON_CHECK $DOC_TEST_FLAGS > doc_test_plain_local.out 2> doc_test_plain_local.txt || DOC_TEST_PLAIN_LOCAL_STATUS=$?
+if [[ $DOC_TEST_PLAIN_LOCAL_STATUS -eq 1 && ! -s doc_test_plain_local.out &&
+      $(grep -c "Error:" doc_test_plain_local.txt) -eq 1 &&
+      $(grep -Ec "Error: 'unused_local' declared but not used[[:space:]]*$" doc_test_plain_local.txt) -eq 1 &&
+      $(grep -Fc "instantiated as 'use_local(" doc_test_plain_local.txt) -ge 1 ]]; then
+	echo "SUCCESSFUL 1/1"
+else
+	cat doc_test_plain_local.out doc_test_plain_local.txt
 	exit 1
 fi
 DOC_TEST_TYPE_ERROR_STATUS=0

@@ -80,6 +80,7 @@ test_documentation_uses_test_context :: proc(t: ^testing.T) {
 		{path = "test_windows.odin-doc", target = "windows", export_context = .Test},
 		{path = "test_darwin.odin-doc", target = "darwin", export_context = .Test},
 		{path = "test_unused.odin-doc", target = host_target, export_context = .Test},
+		{path = "test_unused_local.odin-doc", target = host_target, export_context = .Test},
 	}
 	source := string(read_file(t, "../test_doc_test_context/primary/primary.odin"))
 	test_offset := strings.index(source, "Conditional :: 2")

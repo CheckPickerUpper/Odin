@@ -815,6 +815,12 @@ struct SemanticAttributes {
 	Array<Ast *> const * attributes;
 };
 
+struct ProcedureScopeUsageRequest {
+	Scope *   scope;
+	u64       vet_flags;
+	ProcInfo *instantiation_proc;
+};
+
 // CheckerInfo stores all the symbol information for a type-checked program
 struct CheckerInfo {
 	Checker *checker;
@@ -869,6 +875,7 @@ struct CheckerInfo {
 
 	PerThreadArray<Entity *> definition_queue;
 	PerThreadArray<Entity *> entity_queue;
+	PerThreadArray<ProcedureScopeUsageRequest> procedure_scope_usage_queue;
 
 	// `-export-semantics` related stuff
 	PerThreadArray<SemanticIdent>      semantic_ident_queue;
