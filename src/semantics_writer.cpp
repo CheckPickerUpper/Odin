@@ -731,7 +731,9 @@ gb_internal void export_semantics(Checker *c) {
 			offset = e->token.pos.offset;
 		}
 		String pkg = {};
-		if (e->pkg != nullptr) {
+		// Local types, constants and loop bindings can retain e->pkg for checking.
+		if (e->pkg != nullptr && e->scope != nullptr &&
+		    (e->scope->flags & (ScopeFlag_File|ScopeFlag_Pkg)) != 0) {
 			pkg = e->pkg->name;
 		}
 
