@@ -501,6 +501,7 @@ enum BuildFlagKind {
 	BuildFlag_Short,
 	BuildFlag_InSourceOrder,
 	BuildFlag_AllPackages,
+	BuildFlag_ExportAllPackages,
 	BuildFlag_DocFormat,
 
 	BuildFlag_IgnoreWarnings,
@@ -781,6 +782,7 @@ gb_internal bool parse_build_flags(Array<String> args) {
 	add_flag(&build_flags, BuildFlag_Short,                   str_lit("short"),                     BuildFlagParam_None,    Command_doc);
 	add_flag(&build_flags, BuildFlag_InSourceOrder,           str_lit("in-source-order"),           BuildFlagParam_None,    Command_doc);
 	add_flag(&build_flags, BuildFlag_AllPackages,             str_lit("all-packages"),              BuildFlagParam_None,    Command_doc | Command_test | Command_build);
+	add_flag(&build_flags, BuildFlag_ExportAllPackages,       str_lit("export-all-packages"),       BuildFlagParam_None,    Command_doc | Command_test);
 	add_flag(&build_flags, BuildFlag_DocFormat,               str_lit("doc-format"),                BuildFlagParam_None,    Command_doc | Command_test);
 
 	add_flag(&build_flags, BuildFlag_IgnoreWarnings,          str_lit("ignore-warnings"),           BuildFlagParam_None,    Command_all);
@@ -1774,8 +1776,10 @@ gb_internal bool parse_build_flags(Array<String> args) {
 							build_context.cmd_doc_flags |= CmdDocFlag_InSourceOrder;
 							break;
 						case BuildFlag_AllPackages:
+							build_context.test_all_packages = true;
+							/* fallthrough */
+						case BuildFlag_ExportAllPackages:
 							build_context.cmd_doc_flags |= CmdDocFlag_AllPackages;
-				   			build_context.test_all_packages = true;
 							break;
 						case BuildFlag_DocFormat:
 							build_context.cmd_doc_flags |= CmdDocFlag_DocFormat;
@@ -3147,6 +3151,9 @@ gb_internal int print_show_help(String const arg0, String command, String option
 
 
 	if (doc || test_only) {
+		if (print_flag("-export-all-packages")) {
+			print_usage_line(2, "Includes all imported packages in documentation and semantic exports without selecting their tests.");
+		}
 		if (print_flag("-doc-format")) {
 			print_usage_line(2, "Generates documentation as the .odin-doc format (useful for external tooling).");
 			if (test_only) {
@@ -3194,7 +3201,7 @@ gb_internal int print_show_help(String const arg0, String command, String option
 			print_usage_line(2, "Also exports type layouts and the branches of 'when' statements not taken. Requires `-export-semantics-file`.");
 			print_usage_line(2, "It covers the packages named on the command line, or only the files given with `-export-semantics-for`.");
 			if (doc || test_only) {
-				print_usage_line(2, "With -all-packages, includes all imported packages.");
+				print_usage_line(2, "With -export-all-packages or -all-packages, includes all imported packages.");
 			}
 			print_usage_line(2, "It is written once type checking finishes, even with type errors, but not when the errors reach `-max-error-count`.");
 			print_usage_line(2, "Tools should raise that, and remove the file before each run, as a previous one is otherwise left in place.");

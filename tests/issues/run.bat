@@ -159,10 +159,17 @@ fc /b pr_7848.cbor pr_7848_again.cbor > nul || exit /b
 %ODIN% test "..\test_pr_7848" %COMMON% || exit /b
 
 set DOC_TEST_FLAGS=-vet-packages:doc_test_primary,dependency,test_doc_test_context -vet-cast -vet-using-param -vet-unused-procedures -vet-unused-variables -disallow-do -warnings-as-errors
-%ODIN% doc "..\test_doc_test_context\primary" -doc-format -all-packages -out:production -export-semantics:cbor -export-semantics-file:production.cbor %COMMON% %DOC_TEST_FLAGS% || exit /b
-%ODIN% test "..\test_doc_test_context\primary" -doc-format -all-packages -export-semantics:cbor -export-semantics-file:primary.cbor %COMMON% %DOC_TEST_FLAGS% || exit /b
+%ODIN% doc "..\test_doc_test_context\primary" -doc-format -export-all-packages -out:production -export-semantics:cbor -export-semantics-file:production.cbor %COMMON% %DOC_TEST_FLAGS% || exit /b
+%ODIN% test "..\test_doc_test_context\primary" -doc-format -export-all-packages -define:DOC_TEST_DEPENDENCY_SIGNATURE=true -export-semantics:cbor -export-semantics-file:primary.cbor %COMMON% %DOC_TEST_FLAGS% || exit /b
 %ODIN% test "..\test_doc_test_context\primary" -doc-format -all-packages -target:windows_amd64 -out:test_windows -export-semantics:cbor -export-semantics-file:test_windows.cbor %COMMON% %DOC_TEST_FLAGS% || exit /b
 %ODIN% test "..\test_doc_test_context\primary" -all-packages -target:darwin_arm64 -out:test_darwin -export-semantics:cbor -export-semantics-file:test_darwin.cbor -doc-format %COMMON% %DOC_TEST_FLAGS% || exit /b
+%ODIN% test "..\test_doc_test_context\primary" -doc-format -export-all-packages -all-packages -define:DOC_TEST_DEPENDENCY_SIGNATURE=true -out:test_imported -export-semantics:cbor -export-semantics-file:test_imported.cbor %COMMON% %DOC_TEST_FLAGS% > doc_test_imported.txt 2>&1
+@if !ERRORLEVEL! neq 1 (
+	type doc_test_imported.txt
+	exit /b 1
+)
+type doc_test_imported.txt | find /c "Error:" | findstr /x "1" || exit /b
+type doc_test_imported.txt | find "Error: Testing procedures must have a signature type of proc(^testing.T), got proc()" > nul || exit /b
 @if exist test_unused.odin-doc (
 	del /Q test_unused.odin-doc || exit /b
 )
