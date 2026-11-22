@@ -4414,7 +4414,6 @@ gb_internal bool check_builtin_procedure(CheckerContext *c, Operand *operand, As
 			Type *st = alloc_type_struct_complete();
 			st->Struct.fields = permanent_slice_make<Entity *>(value_count);
 			st->Struct.tags = permanent_alloc_array<String>(value_count);
-			st->Struct.offsets = permanent_alloc_array<i64>(value_count);
 
 			Scope *scope = create_scope(c->info, nullptr);
 
@@ -5138,12 +5137,10 @@ gb_internal bool check_builtin_procedure(CheckerContext *c, Operand *operand, As
 			elem->Struct.fields = slice_from_array(fields);
 			elem->Struct.tags = permanent_alloc_array<String>(fields.count);
 			elem->Struct.node = dummy_node_struct;
-			type_set_offsets(elem);
 			wait_signal_set(&elem->Struct.fields_wait_signal);
 		}
 
 		Type *soa_type = make_soa_struct_slice(c, dummy_node_soa, nullptr, elem);
-		type_set_offsets(soa_type);
 
 		operand->type = soa_type;
 		operand->mode = Addressing_Value;

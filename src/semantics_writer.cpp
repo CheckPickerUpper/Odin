@@ -315,12 +315,17 @@ gb_internal bool semantics_has_layout(Entity *e) {
 	return false;
 }
 
+struct SemanticsField {
+	String name;
+	i64    offset;
+};
+
 struct SemanticsDetails {
-	String value;
-	bool   has_layout;
-	i64    size;
-	i64    align;
-	Type * fields;
+	String                value;
+	bool                  has_layout;
+	i64                   size;
+	i64                   align;
+	Slice<SemanticsField> fields;
 };
 
 gb_internal SemanticsDetails semantics_details(Entity *e) {
@@ -333,8 +338,13 @@ gb_internal SemanticsDetails semantics_details(Entity *e) {
 		d.has_layout = true;
 		d.size       = type_size_of(e->type);
 		d.align      = type_align_of(e->type);
-		if (bt->kind == Type_Struct && bt->Struct.offsets != nullptr) {
-			d.fields = bt;
+		if (bt->kind == Type_Struct && bt->Struct.fields.count != 0) {
+			auto layout = type_aggregate_field_layout(bt);
+			d.fields = temporary_slice_make<SemanticsField>(layout.fields.count);
+			TypePath path{};
+			type_visit_field_offsets(layout, &path, [&](isize i, i64 offset) {
+				d.fields[i] = {layout.fields[i]->token.string, offset};
+			});
 		}
 	}
 	return d;
@@ -344,15 +354,11 @@ gb_internal bool semantics_same_details(SemanticsDetails const &x, SemanticsDeta
 	if (x.value != y.value || x.has_layout != y.has_layout || x.size != y.size || x.align != y.align) {
 		return false;
 	}
-	if (x.fields == nullptr || y.fields == nullptr) {
-		return x.fields == y.fields;
-	}
-	if (x.fields->Struct.fields.count != y.fields->Struct.fields.count) {
+	if (x.fields.count != y.fields.count) {
 		return false;
 	}
-	for_array(i, x.fields->Struct.fields) {
-		if (x.fields->Struct.fields[i]->token.string != y.fields->Struct.fields[i]->token.string ||
-		    x.fields->Struct.offsets[i] != y.fields->Struct.offsets[i]) {
+	for_array(i, x.fields) {
+		if (x.fields[i].name != y.fields[i].name || x.fields[i].offset != y.fields[i].offset) {
 			return false;
 		}
 	}
@@ -587,8 +593,10 @@ gb_internal void export_semantics(Checker *c) {
 			}
 		}
 		if (end-i > 1) {
+			TEMPORARY_ALLOCATOR_GUARD();
 			SemanticsDetails details = semantics_details(u.e);
 			for (isize j = i+1; j < end && !u.varies; j++) {
+				TEMPORARY_ALLOCATOR_GUARD();
 				u.varies = !semantics_same_details(details, semantics_details(entities[j].e));
 			}
 		}
@@ -718,6 +726,7 @@ gb_internal void export_semantics(Checker *c) {
 	defer (array_free(&attribute_elems));
 
 	for (SemanticsEntity const &se : unique) {
+		TEMPORARY_ALLOCATOR_GUARD();
 		Entity *e = se.e;
 		SemanticsDetails d = {};
 		if (!se.varies) {
@@ -737,7 +746,7 @@ gb_internal void export_semantics(Checker *c) {
 			pkg = e->pkg->name;
 		}
 
-		sw_map(&w, 6 + (d.value.len > 0) + 2*d.has_layout + (d.fields != nullptr) + (attribute_elems.count > 0));
+		sw_map(&w, 6 + (d.value.len > 0) + 2*d.has_layout + (d.fields.count > 0) + (attribute_elems.count > 0));
 		sw_key(&w, "name");   sw_string(&w, e->token.string);
 		sw_key(&w, "kind");   sw_string(&w, make_string_c(semantics_entity_kind(e)));
 		sw_key(&w, "pkg");    sw_string(&w, pkg);
@@ -751,13 +760,13 @@ gb_internal void export_semantics(Checker *c) {
 			sw_key(&w, "size");  sw_int(&w, d.size);
 			sw_key(&w, "align"); sw_int(&w, d.align);
 		}
-		if (d.fields != nullptr) {
+		if (d.fields.count > 0) {
 			sw_key(&w, "fields");
-			sw_array(&w, d.fields->Struct.fields.count);
-			for_array(j, d.fields->Struct.fields) {
+			sw_array(&w, d.fields.count);
+			for (SemanticsField const &field : d.fields) {
 				sw_map(&w, 2);
-				sw_key(&w, "name");   sw_string(&w, d.fields->Struct.fields[j]->token.string);
-				sw_key(&w, "offset"); sw_int(&w, d.fields->Struct.offsets[j]);
+				sw_key(&w, "name");   sw_string(&w, field.name);
+				sw_key(&w, "offset"); sw_int(&w, field.offset);
 				sw_map_end(&w);
 			}
 			sw_array_end(&w);

@@ -1,6 +1,7 @@
 struct Ast;
 struct Scope;
 struct Entity;
+struct Type;
 
 // NOTE(Jeroen): Minimum alignment for #load(file, <type>) slices
 #define MINIMUM_SLICE_ALIGNMENT 16
@@ -136,10 +137,18 @@ enum StructSoaKind : u8 {
 	StructSoa_Dynamic = 3,
 };
 
+gb_internal Slice<i64 const> type_completed_field_offsets(Type *t);
+
+class TypeFieldOffsets {
+	i64 const *values;
+
+	friend Slice<i64 const> type_completed_field_offsets(Type *t);
+};
+
 struct TypeStruct {
 	Slice<Entity *> fields;
 	String *        tags;    // count == fields.count
-	i64 *           offsets; // count == fields.count
+	TypeFieldOffsets offsets;
 
 	Ast *           node;
 	Scope *         scope;
@@ -160,7 +169,6 @@ struct TypeStruct {
 	BlockingMutex   offset_mutex; // for settings offsets
 
 	bool            is_polymorphic;
-	bool            are_offsets_set             : 1;
 	bool            is_packed                   : 1;
 	bool            is_raw_union                : 1;
 	bool            is_all_or_none              : 1;
@@ -282,10 +290,8 @@ struct TypeNamed {
 	})                                                        \
 	TYPE_KIND(Tuple, struct {                                 \
 		Slice<Entity *> variables; /* Entity_Variable */  \
-		i64 *           offsets;                          \
+		TypeFieldOffsets offsets;                        \
 		BlockingMutex   mutex; /* for settings offsets */ \
-		std::atomic<bool> are_offsets_being_processed;    \
-		bool            are_offsets_set;                  \
 		bool            is_packed;                        \
 	})                                                        \
 	TYPE_KIND(Proc, TypeProc)                                 \
@@ -888,27 +894,65 @@ gb_internal bool  is_type_soa_pointer(Type *t);
 gb_internal bool  is_type_proc(Type *t);
 gb_internal bool  is_type_slice(Type *t);
 gb_internal bool  is_type_integer(Type *t);
-gb_internal bool  type_set_offsets(Type *t);
 
 
 // IMPORTANT TODO(bill): SHould this TypePath code be removed since type cycle checking is handled much earlier on?
 
 struct TypePath {
-	RecursiveMutex mutex;
-	Array<Entity *> path; // Entity_TypeName;
-	bool failure;
+	RecursiveMutex mutex{};
+	Array<Entity *> path{}; // Entity_TypeName
+	bool failure = false;
+
+	TypePath() {
+		path.allocator = heap_allocator();
+	}
+
+	~TypePath() {
+		MUTEX_GUARD(&mutex);
+		array_free(&path);
+		map_destroy(&sizes);
+		map_destroy(&alignments);
+	}
+
+	i64 measure_size(Type *t);
+	i64 measure_alignment(Type *t);
+
+	void read_unfinished_record() {
+		unfinished_records_read += 1;
+	}
+
+private:
+	PtrMap<Type *, i64> sizes{};
+	PtrMap<Type *, i64> alignments{};
+	usize unfinished_records_read = 0;
+
+	template <typename Measure>
+	i64 measure(PtrMap<Type *, i64> &measures, Type *t, Measure read) {
+		switch (t->kind) {
+		case Type_Struct:
+		case Type_Union:
+		case Type_Tuple:
+		case Type_Array:
+		case Type_EnumeratedArray:
+			break;
+		default:
+			return read(t, this);
+		}
+		if (failure) {
+			return read(t, this);
+		}
+		if (auto current = map_get(&measures, t)) {
+			return *current;
+		}
+		// Reuse a shared sublayout within this traversal if every record it read was complete.
+		usize before = unfinished_records_read;
+		i64 result = read(t, this);
+		if (!failure && before == unfinished_records_read) {
+			map_set(&measures, t, result);
+		}
+		return result;
+	}
 };
-
-
-gb_internal void type_path_init(TypePath *tp) {
-	tp->path.allocator = heap_allocator();
-}
-
-gb_internal void type_path_free(TypePath *tp) {
-	mutex_lock(&tp->mutex);
-	array_free(&tp->path);
-	mutex_unlock(&tp->mutex);
-}
 
 gb_internal void type_path_print_illegal_cycle(TypePath *tp, isize start_index) {
 	GB_ASSERT(tp != nullptr);
@@ -4391,15 +4435,10 @@ case (_length): \
 gb_internal bool are_struct_fields_reordered(Type *type) {
 	type = base_type(type);
 	GB_ASSERT(type->kind == Type_Struct);
-	type_set_offsets(type);
-	if (type->Struct.fields.count == 0) {
-		return false;
-	}
-	GB_ASSERT(type->Struct.offsets != nullptr);
+	auto offsets = type_completed_field_offsets(type);
 
 	i64 prev_offset = 0;
-	for_array(i, type->Struct.fields) {
-		i64 offset = type->Struct.offsets[i];
+	for (i64 offset : offsets) {
 		if (prev_offset > offset) {
 			return true;
 		}
@@ -4412,19 +4451,18 @@ gb_internal bool are_struct_fields_reordered(Type *type) {
 gb_internal Slice<i32> struct_fields_index_by_increasing_offset(gbAllocator allocator, Type *type) {
 	type = base_type(type);
 	GB_ASSERT(type->kind == Type_Struct);
-	type_set_offsets(type);
-	if (type->Struct.fields.count == 0) {
+	auto offsets = type_completed_field_offsets(type);
+	if (offsets.count == 0) {
 		return {};
 	}
-	GB_ASSERT(type->Struct.offsets != nullptr);
 
-	auto indices = slice_make<i32>(allocator, type->Struct.fields.count);
+	auto indices = slice_make<i32>(allocator, offsets.count);
 
 	i64 prev_offset = 0;
 	bool is_ordered = true;
 	for_array(i, indices) {
 		indices.data[i] = cast(i32)i;
-		i64 offset = type->Struct.offsets[i];
+		i64 offset = offsets[i];
 		if (is_ordered && prev_offset > offset) {
 			is_ordered = false;
 		}
@@ -4435,7 +4473,7 @@ gb_internal Slice<i32> struct_fields_index_by_increasing_offset(gbAllocator allo
 		for (isize i = 1; i < n; i++) {
 			isize j = i;
 
-			while (j > 0 && type->Struct.offsets[indices[j-1]] > type->Struct.offsets[indices[j]]) {
+			while (j > 0 && offsets[indices[j-1]] > offsets[indices[j]]) {
 				gb_swap(i32, indices[j-1], indices[j]);
 				j -= 1;
 			}
@@ -4514,7 +4552,6 @@ gb_internal i64 type_size_of(Type *t) {
 		return t->cached_size.load();
 	} else {
 		TypePath path{};
-		type_path_init(&path);
 		{
 			// MUTEX_GUARD(&g_type_mutex);
 			size = type_size_of_internal(t, &path);
@@ -4522,7 +4559,6 @@ gb_internal i64 type_size_of(Type *t) {
 				t->cached_size.store(size);
 			}
 		}
-		type_path_free(&path);
 		return size;
 	}
 }
@@ -4540,7 +4576,6 @@ gb_internal i64 type_align_of(Type *t) {
 	}
 
 	TypePath path{};
-	type_path_init(&path);
 	i64 align = type_align_of_internal(t, &path);
 	{
 		// MUTEX_GUARD(&g_type_mutex);
@@ -4548,7 +4583,6 @@ gb_internal i64 type_align_of(Type *t) {
 			t->cached_align.store(align);
 		}
 	}
-	type_path_free(&path);
 	return align;
 }
 
@@ -4583,14 +4617,7 @@ gb_internal void wait_for_union_variants(Type *t) {
 	}
 }
 
-gb_internal i64 type_align_of_internal(Type *t, TypePath *path) {
-	GB_ASSERT(path != nullptr);
-	if (t->failure) {
-		return FAILURE_ALIGNMENT;
-	}
-
-	t = base_type(t);
-
+gb_internal i64 type_measure_alignment(Type *t, TypePath *path) {
 	switch (t->kind) {
 	case Type_Basic: {
 		GB_ASSERT(is_type_typed(t));
@@ -4684,6 +4711,9 @@ gb_internal i64 type_align_of_internal(Type *t, TypePath *path) {
 
 	case Type_Union: {
 		wait_for_union_variants(t);
+		if (t->Union.variants_wait_signal.futex.load() == 0) {
+			path->read_unfinished_record();
+		}
 		if (t->Union.variants.count == 0) {
 			return 1;
 		}
@@ -4709,6 +4739,9 @@ gb_internal i64 type_align_of_internal(Type *t, TypePath *path) {
 
 	case Type_Struct: {
 		wait_for_struct_fields(t);
+		if (t->Struct.fields_wait_signal.futex.load() == 0) {
+			path->read_unfinished_record();
+		}
 		if (t->Struct.custom_align > 0) {
 			return gb_max(t->Struct.custom_align, 1);
 		}
@@ -4773,89 +4806,131 @@ gb_internal i64 type_align_of_internal(Type *t, TypePath *path) {
 	return gb_clamp(next_pow2(type_size_of_internal(t, path)), 1, type_target_max_align());
 }
 
-gb_internal i64 *type_set_offsets_of(Slice<Entity *> const &fields, bool is_packed, bool is_raw_union, i64 min_field_align, i64 max_field_align) {
-	gbAllocator a = permanent_allocator();
-	auto offsets = gb_alloc_array(a, i64, fields.count);
-	i64 curr_offset = 0;
-
-	if (min_field_align == 0) {
-		min_field_align = 1;
-	}
-
-	TypePath path{};
-	type_path_init(&path);
-	defer (type_path_free(&path));
-
-	if (is_raw_union) {
-		for_array(i, fields) {
-			offsets[i] = 0;
-		}
-	} else if (is_packed) {
-		for_array(i, fields) {
-			if (fields[i]->kind != Entity_Variable) {
-				offsets[i] = -1;
-			} else {
-				i64 size = type_size_of_internal(fields[i]->type, &path);
-				offsets[i] = curr_offset;
-				curr_offset += size;
-			}
-		}
-	} else {
-		for_array(i, fields) {
-			if (fields[i]->kind != Entity_Variable) {
-				offsets[i] = -1;
-			} else {
-				Type *t = fields[i]->type;
-				i64 align = gb_max(type_align_of_internal(t, &path), min_field_align);
-				if (max_field_align != 0) {
-					align = gb_min(align, max_field_align);
-				}
-				i64 size  = gb_max(type_size_of_internal(t, &path), 0);
-				curr_offset = align_formula(curr_offset, align);
-				offsets[i] = curr_offset;
-				curr_offset += size;
-			}
-		}
-	}
-	return offsets;
+i64 TypePath::measure_alignment(Type *t) {
+	return measure(alignments, t, type_measure_alignment);
 }
 
-gb_internal bool type_set_offsets(Type *t) {
-	t = base_type(t);
-	if (t->kind == Type_Struct) {
-		wait_for_struct_fields(t);
-		// if (t->Struct.are_offsets_being_processed.load()) {
-		// 	return true;
-		// }
-		MUTEX_GUARD(&t->Struct.offset_mutex);
-		if (!t->Struct.are_offsets_set) {
-			t->Struct.are_offsets_being_processed.store(true);
-			t->Struct.offsets = type_set_offsets_of(t->Struct.fields, t->Struct.is_packed, t->Struct.is_raw_union, t->Struct.custom_min_field_align, t->Struct.custom_max_field_align);
-			t->Struct.are_offsets_being_processed.store(false);
-			// Recursive map-key checks can inspect a record before all its fields exist.
-			t->Struct.are_offsets_set = global_types_are_complete.load(std::memory_order_relaxed);
-		}
-		return true;
-	} else if (is_type_tuple(t)) {
-		MUTEX_GUARD(&t->Tuple.mutex);
-		if (!t->Tuple.are_offsets_set) {
-			t->Tuple.are_offsets_being_processed.store(true);
-			t->Tuple.offsets = type_set_offsets_of(t->Tuple.variables, t->Tuple.is_packed, false, 1, 0);
-			t->Tuple.are_offsets_being_processed.store(false);
-			t->Tuple.are_offsets_set = global_types_are_complete.load(std::memory_order_relaxed);
-		}
-		return true;
-	} else {
-		GB_PANIC("Invalid type for setting offsets");
-	}
-	return false;
-}
-
-gb_internal i64 type_size_of_internal(Type *t, TypePath *path) {
+gb_internal i64 type_align_of_internal(Type *t, TypePath *path) {
+	GB_ASSERT(path != nullptr);
 	if (t->failure) {
-		return FAILURE_SIZE;
+		return FAILURE_ALIGNMENT;
+	}
+	return path->measure_alignment(base_type(t));
+}
+
+struct AggregateFieldLayout {
+	Slice<Entity *> fields;
+	bool            is_packed;
+	bool            is_raw_union;
+	i64             min_field_align;
+	i64             max_field_align;
+};
+
+gb_internal AggregateFieldLayout type_aggregate_field_layout(Type *t) {
+	switch (t->kind) {
+	case Type_Struct:
+		wait_for_struct_fields(t);
+		return {t->Struct.fields, t->Struct.is_packed, t->Struct.is_raw_union,
+		        gb_max(t->Struct.custom_min_field_align, 1), t->Struct.custom_max_field_align};
+	case Type_Tuple:
+		return {t->Tuple.variables, t->Tuple.is_packed, false, 1, 0};
+	default:
+		GB_PANIC("Invalid type for aggregate field layout");
+		return {};
+	}
+}
+
+template <typename Visit_Offset>
+gb_internal i64 type_visit_field_offsets(AggregateFieldLayout const &layout, TypePath *path, Visit_Offset visit) {
+	if (layout.is_raw_union) {
+		for_array(i, layout.fields) {
+			visit(i, 0);
+		}
+		return 0;
 	}
 
+	i64 curr_offset = 0;
+	for_array(i, layout.fields) {
+		Entity *field = layout.fields[i];
+		if (field->kind != Entity_Variable) {
+			visit(i, -1);
+			continue;
+		}
+
+		i64 size;
+		if (layout.is_packed) {
+			size = type_size_of_internal(field->type, path);
+		} else {
+			i64 align = gb_max(type_align_of_internal(field->type, path), layout.min_field_align);
+			if (layout.max_field_align != 0) {
+				align = gb_min(align, layout.max_field_align);
+			}
+			size = gb_max(type_size_of_internal(field->type, path), 0);
+			curr_offset = align_formula(curr_offset, align);
+		}
+		visit(i, curr_offset);
+		curr_offset += size;
+	}
+	return curr_offset;
+}
+
+gb_internal Slice<i64 const> type_completed_field_offsets(Type *t) {
+	GB_ASSERT(global_types_are_complete.load(std::memory_order_relaxed));
+	t = base_type(t);
+	auto layout = type_aggregate_field_layout(t);
+	if (layout.fields.count == 0) {
+		return {};
+	}
+
+	auto remember_offsets = [&](TypeFieldOffsets &cache) -> Slice<i64 const> {
+		if (cache.values == nullptr) {
+			auto offsets = gb_alloc_array(permanent_allocator(), i64, layout.fields.count);
+			TypePath path{};
+			type_visit_field_offsets(layout, &path, [&](isize i, i64 offset) {
+				offsets[i] = offset;
+			});
+			cache.values = offsets;
+		}
+		return {cache.values, layout.fields.count};
+	};
+
+	switch (t->kind) {
+	case Type_Struct: {
+		MUTEX_GUARD(&t->Struct.offset_mutex);
+		if (t->Struct.offsets.values != nullptr) {
+			return {t->Struct.offsets.values, layout.fields.count};
+		}
+		t->Struct.are_offsets_being_processed.store(true);
+		defer (t->Struct.are_offsets_being_processed.store(false));
+		return remember_offsets(t->Struct.offsets);
+	}
+	case Type_Tuple: {
+		MUTEX_GUARD(&t->Tuple.mutex);
+		return remember_offsets(t->Tuple.offsets);
+	}
+	default:
+		GB_PANIC("Invalid type for completed field offsets");
+		return {};
+	}
+}
+
+gb_internal i64 type_field_offset(Type *t, isize index) {
+	if (global_types_are_complete.load(std::memory_order_relaxed)) {
+		return type_completed_field_offsets(t)[index];
+	}
+
+	// Recursive map-key checks can inspect a record before all its fields exist.
+	TypePath path{};
+	i64 result = -1;
+	type_visit_field_offsets(type_aggregate_field_layout(t), &path, [&](isize i, i64 offset) {
+		if (i == index) {
+			result = offset;
+		}
+	});
+	return result;
+}
+
+gb_internal i64 type_measure_size(Type *t, TypePath *path) {
 	switch (t->kind) {
 	case Type_Named: {
 		bool pop = type_path_push(path, t);
@@ -4977,8 +5052,14 @@ gb_internal i64 type_size_of_internal(Type *t, TypePath *path) {
 			return 0;
 		}
 		align = type_align_of_internal(t, path);
-		type_set_offsets(t);
-		size = t->Tuple.offsets[cast(isize)count-1] + type_size_of_internal(t->Tuple.variables[cast(isize)count-1]->type, path);
+		if (!global_types_are_complete.load(std::memory_order_relaxed)) {
+			i64 extent = type_visit_field_offsets(type_aggregate_field_layout(t), path, [](isize, i64) {});
+			if (path->failure) {
+				return FAILURE_SIZE;
+			}
+			return align_formula(extent, align);
+		}
+		size = type_completed_field_offsets(t)[cast(isize)count-1] + type_size_of_internal(t->Tuple.variables[cast(isize)count-1]->type, path);
 		return align_formula(size, align);
 	} break;
 
@@ -4990,6 +5071,9 @@ gb_internal i64 type_size_of_internal(Type *t, TypePath *path) {
 
 	case Type_Union: {
 		wait_for_union_variants(t);
+		if (t->Union.variants_wait_signal.futex.load() == 0) {
+			path->read_unfinished_record();
+		}
 		if (t->Union.variants.count == 0) {
 			return 0;
 		}
@@ -5031,6 +5115,9 @@ gb_internal i64 type_size_of_internal(Type *t, TypePath *path) {
 
 	case Type_Struct: {
 		wait_for_struct_fields(t);
+		if (t->Struct.fields_wait_signal.futex.load() == 0) {
+			path->read_unfinished_record();
+		}
 		if (t->Struct.is_raw_union) {
 			i64 count = t->Struct.fields.count;
 			i64 align = type_align_of_internal(t, path);
@@ -5056,16 +5143,21 @@ gb_internal i64 type_size_of_internal(Type *t, TypePath *path) {
 			if (path->failure) {
 				return FAILURE_SIZE;
 			}
+			if (!global_types_are_complete.load(std::memory_order_relaxed)) {
+				i64 extent = type_visit_field_offsets(type_aggregate_field_layout(t), path, [](isize, i64) {});
+				if (path->failure) {
+					return FAILURE_SIZE;
+				}
+				return align_formula(extent, align);
+			}
 			{
 				MUTEX_GUARD(&t->Struct.offset_mutex);
-				if (t->Struct.are_offsets_being_processed.load() && t->Struct.offsets == nullptr) {
+				if (t->Struct.are_offsets_being_processed.load()) {
 					type_path_print_illegal_cycle(path, path->path.count-1);
 					return FAILURE_SIZE;
 				}
 			}
-			type_set_offsets(t);
-			GB_ASSERT(t->Struct.fields.count == 0 || t->Struct.offsets != nullptr);
-			size = t->Struct.offsets[cast(isize)count-1] + type_size_of_internal(t->Struct.fields[cast(isize)count-1]->type, path);
+			size = type_completed_field_offsets(t)[cast(isize)count-1] + type_size_of_internal(t->Struct.fields[cast(isize)count-1]->type, path);
 			return align_formula(size, align);
 		}
 	} break;
@@ -5111,23 +5203,31 @@ gb_internal i64 type_size_of_internal(Type *t, TypePath *path) {
 	return build_context.ptr_size;
 }
 
+i64 TypePath::measure_size(Type *t) {
+	return measure(sizes, t, type_measure_size);
+}
+
+gb_internal i64 type_size_of_internal(Type *t, TypePath *path) {
+	if (t->failure) {
+		return FAILURE_SIZE;
+	}
+	return path->measure_size(t);
+}
+
 gb_internal i64 type_offset_of(Type *t, i64 index, Type **field_type_) {
 	t = base_type(t);
 	switch (t->kind) {
 	case Type_Struct:
-		type_set_offsets(t);
+		wait_for_struct_fields(t);
 		if (gb_is_between(index, 0, t->Struct.fields.count-1)) {
-			GB_ASSERT(t->Struct.offsets != nullptr);
 			if (field_type_) *field_type_ = t->Struct.fields[index]->type;
-			return t->Struct.offsets[index];
+			return type_field_offset(t, index);
 		}
 		break;
 	case Type_Tuple:
-		type_set_offsets(t);
 		if (gb_is_between(index, 0, t->Tuple.variables.count-1)) {
-			GB_ASSERT(t->Tuple.offsets != nullptr);
 			if (field_type_) *field_type_ = t->Tuple.variables[index]->type;
-			i64 offset = t->Tuple.offsets[index];
+			i64 offset = type_field_offset(t, index);
 			GB_ASSERT(offset >= 0);
 			return offset;
 		}

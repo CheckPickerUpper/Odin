@@ -292,7 +292,7 @@ gb_internal LLVMMetadataRef lb_debug_struct(lbModule *m, Type *type, Type *bt, S
 
 	LLVMMetadataRef temp_forward_decl = lb_debug_placeholder(m, type, tag, name, scope, file, line, size_in_bits, align_in_bits);
 
-	type_set_offsets(bt);
+	auto offsets = type_completed_field_offsets(bt);
 
 	unsigned element_count = cast(unsigned)(bt->Struct.fields.count);
 	LLVMMetadataRef *elements = gb_alloc_array(temporary_allocator(), LLVMMetadataRef, element_count);
@@ -305,8 +305,7 @@ gb_internal LLVMMetadataRef lb_debug_struct(lbModule *m, Type *type, Type *bt, S
 
 		unsigned field_line = 0;
 		LLVMDIFlags field_flags = LLVMDIFlagZero;
-		GB_ASSERT(bt->Struct.offsets != nullptr);
-		u64 offset_in_bits = 8*cast(u64)bt->Struct.offsets[j];
+		u64 offset_in_bits = 8*cast(u64)offsets[j];
 
 		elements[j] = LLVMDIBuilderCreateMemberType(
 			m->debug_builder,
@@ -1144,7 +1143,7 @@ gb_internal LLVMMetadataRef lb_debug_type_internal(lbModule *m, Type *type) {
 		if (type->Tuple.variables.count == 1) {
 			return lb_debug_type(m, type->Tuple.variables[0]->type);
 		} else {
-			type_set_offsets(type);
+			auto offsets = type_completed_field_offsets(type);
 			LLVMMetadataRef parent_scope = nullptr;
 			LLVMMetadataRef scope = nullptr;
 			LLVMMetadataRef file = nullptr;
@@ -1162,7 +1161,7 @@ gb_internal LLVMMetadataRef lb_debug_type_internal(lbModule *m, Type *type) {
 				String name = f->token.string;
 				unsigned field_line = 0;
 				LLVMDIFlags field_flags = LLVMDIFlagZero;
-				u64 offset_in_bits = 8*cast(u64)type->Tuple.offsets[i];
+				u64 offset_in_bits = 8*cast(u64)offsets[i];
 				elements[i] = LLVMDIBuilderCreateMemberType(m->debug_builder, scope, cast(char const *)name.text, name.len, file, field_line,
 					8*cast(u64)type_size_of(f->type), 8*cast(u32)type_align_of(f->type), offset_in_bits,
 					field_flags, lb_debug_type(m, f->type)

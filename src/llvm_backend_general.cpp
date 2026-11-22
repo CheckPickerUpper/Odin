@@ -3309,7 +3309,7 @@ gb_internal LLVMTypeRef lb_type_internal(lbModule *m, Type *type) {
 
 	case Type_Struct:
 		{
-			type_set_offsets(type);
+			auto offsets = type_completed_field_offsets(type);
 
 			i64 full_type_size = type_size_of(type);
 			i64 full_type_align = type_align_of(type);
@@ -3363,7 +3363,7 @@ gb_internal LLVMTypeRef lb_type_internal(lbModule *m, Type *type) {
 			i64 prev_offset = 0;
 			for (i32 field_index : struct_fields_index_by_increasing_offset(temporary_allocator(), type)) {
 				Entity *field = type->Struct.fields[field_index];
-				i64 offset = type->Struct.offsets[field_index];
+				i64 offset = offsets[field_index];
 				GB_ASSERT(offset >= prev_offset);
 
 				i64 padding = offset - prev_offset;

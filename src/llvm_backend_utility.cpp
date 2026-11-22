@@ -165,7 +165,7 @@ gb_internal void lb_mem_zero_ptr(lbProcedure *p, LLVMValueRef ptr, Type *type, u
 			// NOTE(bill): even though this should be safe, to keep ASAN happy, do not zero the implicit padding at the end
 			GB_ASSERT(type->kind == Type_Tuple);
 			i64 n = type->Tuple.variables.count-1;
-			i64 end_offset = type->Tuple.offsets[n] + type_size_of(type->Tuple.variables[n]->type);
+			i64 end_offset = type_completed_field_offsets(type)[n] + type_size_of(type->Tuple.variables[n]->type);
 			lb_mem_zero_ptr_internal(p, ptr, lb_const_int(p->module, t_int, end_offset).value, alignment, false);
 		} else {
 			// NOTE(bill): Enforce zeroing through memset to make sure padding is zeroed too

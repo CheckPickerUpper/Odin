@@ -302,8 +302,6 @@ gb_internal void lb_equal_proc_generate_body(lbModule *m, lbProcedure *p) {
 	lb_start_block(p, block_diff_ptr);
 
 	if (type->kind == Type_Struct) {
-		type_set_offsets(type);
-
 		lbBlock *block_false = lb_create_block(p, "bfalse");
 		lbValue res = lb_const_bool(m, t_bool, true);
 
@@ -483,13 +481,12 @@ gb_internal lbValue lb_hasher_proc_for_type(lbModule *m, Type *type) {
 	TEMPORARY_ALLOCATOR_GUARD();
 
 	if (type->kind == Type_Struct)  {
-		type_set_offsets(type);
+		auto offsets = type_completed_field_offsets(type);
 		data = lb_emit_conv(p, data, t_u8_ptr);
 
 		auto args = array_make<lbValue>(temporary_allocator(), 2);
 		for_array(i, type->Struct.fields) {
-			GB_ASSERT(type->Struct.offsets != nullptr);
-			i64 offset = type->Struct.offsets[i];
+			i64 offset = offsets[i];
 			Entity *field = type->Struct.fields[i];
 			lbValue field_hasher = lb_hasher_proc_for_type(m, field->type);
 			lbValue ptr = lb_emit_ptr_offset(p, data, lb_const_int(m, t_uintptr, offset));

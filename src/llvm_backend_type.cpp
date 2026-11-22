@@ -910,14 +910,13 @@ gb_internal void lb_setup_type_info_data_giant_array(lbModule *m, i64 global_typ
 				lbValue memory_usings  = lb_type_info_member_usings_offset (m, count, &usings_offset);
 				lbValue memory_tags    = lb_type_info_member_tags_offset   (m, count, &tags_offset);
 
-				type_set_offsets(t); // NOTE(bill): Just incase the offsets have not been set yet
+				auto offsets = type_completed_field_offsets(t);
 				for (isize source_index = 0; source_index < count; source_index++) {
 					Entity *f = t->Struct.fields[source_index];
 					i64 foffset = 0;
 					if (!t->Struct.is_raw_union) {
-						GB_ASSERT_MSG(t->Struct.offsets != nullptr, "%s", type_to_string(t));
 						GB_ASSERT(0 <= f->Variable.field_index && f->Variable.field_index < count);
-						foffset = t->Struct.offsets[source_index];
+						foffset = offsets[source_index];
 					}
 					GB_ASSERT(f->kind == Entity_Variable && f->flags & EntityFlag_Field);
 
