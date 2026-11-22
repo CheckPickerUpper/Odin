@@ -277,7 +277,10 @@ gb_internal lbTypeLayout lb_aggregate_layout(LLVMTypeRef type) {
 		}
 		layout.size = llvm_align_formula(layout.size, layout.align);
 	}
-	map_set(&lb_aggregate_layouts, type, layout);
+	// A nested opaque type can become complete after this recursive query returns.
+	if (LLVMTypeIsSized(type)) {
+		map_set(&lb_aggregate_layouts, type, layout);
+	}
 	return layout;
 }
 

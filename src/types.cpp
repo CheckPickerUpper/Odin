@@ -4480,7 +4480,8 @@ gb_internal i64 type_size_of_struct_pretend_is_packed(Type *ot) {
 
 
 gb_internal i64 type_size_of(Type *t) {
-	if (t != nullptr && t->kind == Type_Named && global_types_are_complete.load(std::memory_order_relaxed)) {
+	bool use_cache = global_types_are_complete.load(std::memory_order_relaxed);
+	if (t != nullptr && t->kind == Type_Named && use_cache) {
 		t = base_type(t);
 	}
 	if (t == nullptr) {
@@ -4509,7 +4510,7 @@ gb_internal i64 type_size_of(Type *t) {
 		}
 		t->cached_size.store(size);
 		return size;
-	} else if (t->kind != Type_Named && t->cached_size >= 0) {
+	} else if (use_cache && t->kind != Type_Named && t->cached_size >= 0) {
 		return t->cached_size.load();
 	} else {
 		TypePath path{};
@@ -4517,7 +4518,9 @@ gb_internal i64 type_size_of(Type *t) {
 		{
 			// MUTEX_GUARD(&g_type_mutex);
 			size = type_size_of_internal(t, &path);
-			t->cached_size.store(size);
+			if (use_cache) {
+				t->cached_size.store(size);
+			}
 		}
 		type_path_free(&path);
 		return size;
@@ -4525,24 +4528,28 @@ gb_internal i64 type_size_of(Type *t) {
 }
 
 gb_internal i64 type_align_of(Type *t) {
-	if (t != nullptr && t->kind == Type_Named && global_types_are_complete.load(std::memory_order_relaxed)) {
+	bool use_cache = global_types_are_complete.load(std::memory_order_relaxed);
+	if (t != nullptr && t->kind == Type_Named && use_cache) {
 		t = base_type(t);
 	}
 	if (t == nullptr) {
 		return 1;
 	}
-	if (t->kind != Type_Named && t->cached_align > 0) {
+	if (use_cache && t->kind != Type_Named && t->cached_align > 0) {
 		return t->cached_align.load();
 	}
 
 	TypePath path{};
 	type_path_init(&path);
+	i64 align = type_align_of_internal(t, &path);
 	{
 		// MUTEX_GUARD(&g_type_mutex);
-		t->cached_align.store(type_align_of_internal(t, &path));
+		if (use_cache) {
+			t->cached_align.store(align);
+		}
 	}
 	type_path_free(&path);
-	return t->cached_align.load();
+	return align;
 }
 
 
@@ -4825,7 +4832,8 @@ gb_internal bool type_set_offsets(Type *t) {
 			t->Struct.are_offsets_being_processed.store(true);
 			t->Struct.offsets = type_set_offsets_of(t->Struct.fields, t->Struct.is_packed, t->Struct.is_raw_union, t->Struct.custom_min_field_align, t->Struct.custom_max_field_align);
 			t->Struct.are_offsets_being_processed.store(false);
-			t->Struct.are_offsets_set = true;
+			// Recursive map-key checks can inspect a record before all its fields exist.
+			t->Struct.are_offsets_set = global_types_are_complete.load(std::memory_order_relaxed);
 		}
 		return true;
 	} else if (is_type_tuple(t)) {
@@ -4834,7 +4842,7 @@ gb_internal bool type_set_offsets(Type *t) {
 			t->Tuple.are_offsets_being_processed.store(true);
 			t->Tuple.offsets = type_set_offsets_of(t->Tuple.variables, t->Tuple.is_packed, false, 1, 0);
 			t->Tuple.are_offsets_being_processed.store(false);
-			t->Tuple.are_offsets_set = true;
+			t->Tuple.are_offsets_set = global_types_are_complete.load(std::memory_order_relaxed);
 		}
 		return true;
 	} else {
