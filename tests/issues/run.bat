@@ -39,6 +39,7 @@ set ODIN=..\..\..\odin
 %ODIN% check "..\test_issue_5335" %COMMON% 2>&1 | find /c "Error:" | findstr /x "2" || exit /b
 %ODIN% check "..\test_issue_6484" -no-entry-point %COMMON% || exit /b
 %ODIN% check "..\test_issue_6874" %COMMON% 2>&1 | find /c "Error:" | findstr /x "1" || exit /b
+%ODIN% check "..\test_issue_6348" -no-entry-point %COMMON% || exit /b
 %ODIN% check "..\test_issue_6979" -no-entry-point %COMMON% || exit /b
 %ODIN% check "..\test_issue_7012" -no-entry-point %COMMON% || exit /b
 %ODIN% check "..\test_issue_7199" %COMMON% 2>&1 | find /c "..19988 chars.." | findstr /x "1" || exit /b

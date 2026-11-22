@@ -148,6 +148,7 @@ else
 	exit 1
 fi
 
+$ODIN check ../test_issue_6348 -no-entry-point $COMMON_CHECK
 $ODIN check ../test_issue_6979 -no-entry-point $COMMON_CHECK
 $ODIN check ../test_issue_7012 -no-entry-point $COMMON_CHECK
 
