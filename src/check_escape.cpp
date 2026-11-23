@@ -2,17 +2,31 @@
 // An explicit conversion to 'rawptr' or 'uintptr', or a 'transmute', opts out
 // A call uses a summary of what of its arguments may reach its results, analysing the callee first if it must
 
-enum EscapeStepKind : u8 {
+enum EscapeStepKind : u16 {
 	EscapeStep_Invalid,
 	EscapeStep_Field,
 	EscapeStep_AnyElement,
 	EscapeStep_Deref, // into what the pointer at the path so far points to
 };
 
-struct EscapeStep {
-	EscapeStepKind kind;
-	Entity *       field;
+// which other types a field's type is the same as, see `escape_holders_eq`
+enum EscapeHolderKind : u16 {
+	EscapeHolder_None,
+	EscapeHolder_Named,   // the struct of a type with a name, the same only as itself
+	EscapeHolder_Unnamed, // a struct without a name, the same as any identical one
+	EscapeHolder_Builtin, // not a struct, e.g. a dynamic array for its allocator, the same as any of its kind
 };
+
+// NOTE: a field is named by the type it is one of and where it is in it, rather than by its entity, as identical struct
+// types without a name are one type whose copies have fields of their own, e.g. each `#soa[dynamic]T`, or an anonymous
+// struct written in two places, while a specialization made for one of them is called with the others
+struct EscapeStep {
+	EscapeStepKind   kind;
+	EscapeHolderKind holder_kind;
+	i32              index;  // of the field within `holder`
+	Type *           holder; // with `EscapeStep_Field`, the base type the field is one of
+};
+static_assert(offsetof(EscapeStep, holder) == sizeof(u64), "EscapeStep metadata must occupy one word");
 
 // immutable once made, so paths share their steps
 typedef Slice<EscapeStep> EscapePath;
@@ -305,21 +319,83 @@ gb_internal i32  global_graph_scc(i32 node_count, Array<i32> const &offsets,   A
 gb_internal void global_graph_csr(i32 node_count, Array<i32> const &edge_from, Array<i32> const &edge_to, Array<i32> *offsets, Array<i32> *targets);
 
 
-gb_internal bool escape_path_has_prefix(EscapePath const &p, EscapePath const &prefix) {
+// the base type of a type a field is one of, with which others it is the same as
+gb_internal Type *escape_holder_of(Type *t, EscapeHolderKind *kind) {
+	Type *bt = base_type(t);
+	if (bt == nullptr || bt->kind != Type_Struct) {
+		*kind = EscapeHolder_Builtin;
+	} else if (t->kind == Type_Named) {
+		*kind = EscapeHolder_Named;
+	} else {
+		*kind = EscapeHolder_Unnamed;
+	}
+	return bt;
+}
+
+// NOTE: kept out of `escape_step_eq`, which is inlined where paths are compared, as it is rarely reached
+gb_internal gb_no_inline bool escape_holders_eq(EscapeHolderKind a_kind, Type *a, EscapeHolderKind b_kind, Type *b) {
+	if (a == b) {
+		return true;
+	}
+	if (a_kind != b_kind) {
+		return false;
+	}
+	switch (a_kind) {
+	case EscapeHolder_None:    return false;
+	case EscapeHolder_Named:   return false;
+	case EscapeHolder_Unnamed: return are_types_identical(a, b);
+	case EscapeHolder_Builtin: return a->kind == b->kind && (a->kind != Type_Basic || a->Basic.kind == b->Basic.kind);
+	}
+	return false;
+}
+
+// Compare the kinds and index together before comparing the holder.
+template <bool CompareHolderTypes = true>
+gb_internal gb_inline bool escape_step_eq(EscapeStep const &a, EscapeStep const &b) {
+	u64 a_word;
+	u64 b_word;
+	memcpy(&a_word, &a, sizeof(a_word));
+	memcpy(&b_word, &b, sizeof(b_word));
+	if (a_word != b_word) {
+		return false;
+	}
+	if (CompareHolderTypes) {
+		return a.holder == b.holder || (a.holder_kind > EscapeHolder_Named && escape_holders_eq(a.holder_kind, a.holder, b.holder_kind, b.holder));
+	}
+	return a.holder == b.holder;
+}
+
+// of a step to a field of a struct
+gb_internal Entity *escape_step_field(EscapeStep const &step) {
+	GB_ASSERT(step.holder->kind == Type_Struct);
+	return step.holder->Struct.fields[step.index];
+}
+
+template <bool CompareHolderTypes = true>
+gb_internal gb_inline bool escape_path_has_prefix(EscapePath p, EscapePath prefix) {
 	if (prefix.count > p.count) {
 		return false;
 	}
 	for_array(i, prefix) {
-		if (p[i].kind  != prefix[i].kind ||
-		    p[i].field != prefix[i].field) {
+		if (!escape_step_eq<CompareHolderTypes>(p[i], prefix[i])) {
 			return false;
 		}
 	}
 	return true;
 }
 
-gb_internal bool escape_path_eq(EscapePath const &a, EscapePath const &b) {
-	return a.count == b.count && escape_path_has_prefix(a, b);
+template <bool CompareHolderTypes = true>
+gb_internal gb_inline bool escape_path_eq(EscapePath a, EscapePath b) {
+	return a.count == b.count && escape_path_has_prefix<CompareHolderTypes>(a, b);
+}
+
+gb_internal bool escape_path_needs_type_comparison(EscapePath const &path) {
+	for (EscapeStep const &step : path) {
+		if (step.holder_kind > EscapeHolder_Named) {
+			return true;
+		}
+	}
+	return false;
 }
 
 // one is within the other
@@ -327,9 +403,21 @@ gb_internal bool escape_paths_overlap(EscapePath const &a, EscapePath const &b) 
 	return escape_path_has_prefix(a, b) || escape_path_has_prefix(b, a);
 }
 
-gb_internal EscapePath escape_path_of(EscapeStepKind kind, Entity *field=nullptr) {
+gb_internal EscapePath escape_path_of(EscapeStepKind kind) {
+	GB_ASSERT(kind != EscapeStep_Field);
 	auto p = slice_make<EscapeStep>(temporary_allocator(), 1);
-	p[0] = {kind, field};
+	p[0] = {kind};
+	return p;
+}
+
+// the field at the index of a type, see `EscapeStep`
+gb_internal EscapePath escape_path_of_field(Type *t, isize index) {
+	EscapeHolderKind holder_kind = EscapeHolder_None;
+	Type *holder = escape_holder_of(t, &holder_kind);
+	// Builtin pseudo-fields can use signed indices, such as -1 for a quaternion's xyz.
+	GB_ASSERT(holder->kind != Type_Struct || (0 <= index && index < holder->Struct.fields.count));
+	auto p = slice_make<EscapeStep>(temporary_allocator(), 1);
+	p[0] = {EscapeStep_Field, holder_kind, cast(i32)index, holder};
 	return p;
 }
 
@@ -351,11 +439,12 @@ gb_internal bool escape_eq(EscapeObject const &a, EscapeObject const &b) {
 	       a.temp   == b.temp;
 }
 
-gb_internal bool escape_eq(EscapeOrigin const &a, EscapeOrigin const &b) {
+template <bool CompareHolderTypes = true>
+gb_internal gb_inline bool escape_eq(EscapeOrigin const &a, EscapeOrigin const &b) {
 	return a.kind == b.kind               &&
 	       a.offset_lost == b.offset_lost &&
 	       escape_eq(a.obj, b.obj)        &&
-	       escape_path_eq(a.path, b.path);
+	       escape_path_eq<CompareHolderTypes>(a.path, b.path);
 }
 
 gb_internal bool escape_eq(EscapeOuterStore const &a, EscapeOuterStore const &b) {
@@ -372,14 +461,26 @@ gb_internal EscapeValue escape_value(void) {
 	return array_make<EscapeValueFact>(temporary_allocator(), 0, 0);
 }
 
-gb_internal void escape_value_add(EscapeValue *v, EscapePath const &path, EscapeOrigin const &o, bool definite=false) {
+template <bool CompareHolderTypes>
+gb_internal void escape_value_add(EscapeValue *v, EscapePath const &path, EscapeOrigin const &o, bool definite) {
 	for (EscapeValueFact &f : *v) {
-		if (escape_path_eq(f.path, path) && escape_eq(f.origin, o)) {
+		if (f.path.count == path.count &&
+		    escape_eq<CompareHolderTypes>(f.origin, o) &&
+		    escape_path_has_prefix<CompareHolderTypes>(f.path, path)) {
 			f.definite |= definite;
 			return;
 		}
 	}
 	array_add(v, EscapeValueFact{path, o, definite});
+}
+
+gb_internal void escape_value_add(EscapeValue *v, EscapePath const &path, EscapeOrigin const &o, bool definite=false) {
+	// Only scan with type comparisons when the incoming fact has a holder that can match a different pointer.
+	if (escape_path_needs_type_comparison(path) || escape_path_needs_type_comparison(o.path)) {
+		escape_value_add<true>(v, path, o, definite);
+	} else {
+		escape_value_add<false>(v, path, o, definite);
+	}
 }
 
 gb_internal EscapeValue escape_value_one(EscapePath const &path, EscapeOrigin const &o, bool definite=false) {
@@ -811,6 +912,47 @@ gb_internal bool escape_struct_has_field(Type *bt, Entity *field) {
 	return 0 <= index && index < bt->Struct.fields.count && bt->Struct.fields[index] == field;
 }
 
+// a step to one of the fields of a struct type, see `escape_holders_eq`
+gb_internal bool escape_struct_has_step(Type *t, EscapeStep const &step) {
+	if (t == nullptr || step.kind != EscapeStep_Field) {
+		return false;
+	}
+	EscapeHolderKind kind = EscapeHolder_None;
+	Type *bt = escape_holder_of(t, &kind);
+	return bt != nullptr && bt->kind == Type_Struct && escape_holders_eq(step.holder_kind, step.holder, kind, bt);
+}
+
+// the type a field selected from a value of the type is one of: for one reached through 'using', the type of what it
+// was brought in from, and for one of no struct, e.g. the allocator of a dynamic array, the base type it is of
+gb_internal Type *escape_field_holder(Type *t, Entity *f) {
+	Type *holder = type_deref(t);
+	Type *bt     = base_type(holder);
+	if (bt == nullptr || bt->kind != Type_Struct) {
+		return bt;
+	}
+	if (escape_struct_has_field(bt, f)) {
+		return holder;
+	}
+	Selection sel = lookup_field(bt, entity_interned_name(f), false);
+	if (sel.entity != f || sel.index.count == 0) {
+		return nullptr;
+	}
+	for (isize k = 0; k < sel.index.count-1; k++) {
+		if (bt == nullptr || bt->kind != Type_Struct) {
+			return nullptr;
+		}
+		holder = type_deref(bt->Struct.fields[sel.index[k]]->type);
+		bt     = base_type(holder);
+	}
+	if (bt == nullptr || bt->kind != Type_Struct) {
+		return bt;
+	}
+	if (!escape_struct_has_field(bt, f)) {
+		return nullptr;
+	}
+	return holder;
+}
+
 // the type of the elements of a container, e.g. the values of a map
 gb_internal Type *escape_elem_type(Type *bt) {
 	switch (bt->kind) {
@@ -859,16 +1001,17 @@ gb_internal bool escape_is_using_field(Entity *e) {
 
 // the path of a field brought in by 'using' within what it was applied to, unless it is reached through another
 gb_internal bool escape_using_path(Entity *e, EscapePath *path) {
-	Type *t = base_type(type_deref(e->using_parent->type));
+	Type *holder = type_deref(e->using_parent->type);
+	Type *t = base_type(holder);
 	if (t == nullptr || t->kind != Type_Struct) {
 		return false;
 	}
-	for (Entity *f : t->Struct.fields) {
-		if (f->token.string == e->token.string) {
+	for_array(i, t->Struct.fields) {
+		if (t->Struct.fields[i]->token.string == e->token.string) {
 			// the fields of a raw union share its storage
 			*path = {};
 			if (!t->Struct.is_raw_union) {
-				*path = escape_path_of(EscapeStep_Field, f);
+				*path = escape_path_of_field(holder, i);
 			}
 			return true;
 		}
@@ -896,8 +1039,8 @@ gb_internal Type *escape_type_within(Type *t, EscapePath const &path) {
 		}
 		if (step.kind != EscapeStep_Field) {
 			t = escape_elem_type(bt);
-		} else if (escape_struct_has_field(bt, step.field)) {
-			t = step.field->type;
+		} else if (escape_struct_has_step(t, step)) {
+			t = bt->Struct.fields[step.index]->type;
 		} else {
 			return nullptr;
 		}
@@ -950,15 +1093,15 @@ gb_internal Type *escape_pointee_type(Type *t) {
 gb_internal bool escape_sibling_fields(Type *t, EscapePath const &path, isize from, Array<EscapePath> *siblings) {
 	for (isize j = from; j < path.count; j++) {
 		Type *bt = base_type(t);
-		if (path[j].kind != EscapeStep_Field || !escape_struct_has_field(bt, path[j].field)) {
+		if (!escape_struct_has_step(t, path[j])) {
 			return false;
 		}
-		for (Entity *f : bt->Struct.fields) {
-			if (f != path[j].field) {
-				array_add(siblings, escape_path_concat(slice(path, 0, j), escape_path_of(EscapeStep_Field, f)));
+		for_array(k, bt->Struct.fields) {
+			if (k != path[j].index) {
+				array_add(siblings, escape_path_concat(slice(path, 0, j), escape_path_of_field(t, k)));
 			}
 		}
-		t = path[j].field->type;
+		t = bt->Struct.fields[path[j].index]->type;
 	}
 	return true;
 }
@@ -1001,7 +1144,7 @@ gb_internal void escape_store_obj(EscapeAnalysis *ea, EscapeObject const &obj, E
 				continue;
 			}
 			for (EscapePath const &piece : siblings) {
-				if (escape_type_has_pointers(piece[piece.count-1].field->type)) {
+				if (escape_type_has_pointers(escape_step_field(piece[piece.count-1])->type)) {
 					array_add(&pieces, EscapeFact{f.obj, piece, escape_origin_within(f.origin, piece, f.path.count)});
 				}
 			}
@@ -1292,7 +1435,11 @@ gb_internal bool escape_selector_path(Ast *se_node, EscapePath *path) {
 	// the fields of a raw union share its storage
 	*path = {};
 	if (!is_type_raw_union(type_deref(se->expr->tav.type))) {
-		*path = escape_path_of(EscapeStep_Field, f);
+		Type *holder = escape_field_holder(se->expr->tav.type, f);
+		if (holder == nullptr) {
+			return false;
+		}
+		*path = escape_path_of_field(holder, f->Variable.field_index);
 	}
 	return true;
 }
@@ -1503,7 +1650,7 @@ gb_internal void escape_nil_kill(EscapeAnalysis *ea, Entity *e, EscapePath const
 		auto siblings = array_make<EscapePath>(temporary_allocator(), 0, 0);
 		escape_sibling_fields(escape_type_within(e->type, n.path), path, n.path.count, &siblings);
 		for (EscapePath const &p : siblings) {
-			if (n.uninit || escape_type_has_nilable(p[p.count-1].field->type)) {
+			if (n.uninit || escape_type_has_nilable(escape_step_field(p[p.count-1])->type)) {
 				array_add(&pieces, EscapeNil{e, p, n.uninit});
 			}
 		}
@@ -1569,7 +1716,7 @@ gb_internal Array<EscapePath> escape_nil_paths(EscapeAnalysis *ea, Ast *expr) {
 			if (!escape_type_has_nilable(f->type)) {
 				continue;
 			}
-			EscapePath field = escape_path_of(EscapeStep_Field, f);
+			EscapePath field = escape_path_of_field(expr->tav.type, j);
 			if (values[j] == nullptr) {
 				array_add(&paths, field);
 				continue;
@@ -3279,7 +3426,7 @@ gb_internal EscapeValue escape_expr(EscapeAnalysis *ea, Ast *expr) {
 					Entity *f = t->Struct.fields[index];
 					elem_type = f->type;
 					if (!t->Struct.is_raw_union) {
-						path = escape_path_of(EscapeStep_Field, f);
+						path = escape_path_of_field(expr->tav.type, index);
 					}
 				}
 			} else {
@@ -3521,14 +3668,16 @@ gb_internal gbString escape_expr_to_string(Ast *expr) {
 // the fields a path goes through within a value of the type, e.g. `.a.b` of `.a.b[_]`
 gb_internal gbString escape_append_fields(gbString s, Type *t, EscapePath const &path) {
 	for (EscapeStep const &step : path) {
-		if (step.kind != EscapeStep_Field || !escape_struct_has_field(base_type(t), step.field)) {
+		Type *bt = base_type(t);
+		if (!escape_struct_has_step(t, step)) {
 			break;
 		}
-		if (step.field->token.string.len == 0 || is_blank_ident(step.field->token)) {
+		Entity *field = bt->Struct.fields[step.index];
+		if (field->token.string.len == 0 || is_blank_ident(field->token)) {
 			break;
 		}
-		s = gb_string_append_fmt(s, ".%.*s", LIT(step.field->token.string));
-		t = step.field->type;
+		s = gb_string_append_fmt(s, ".%.*s", LIT(field->token.string));
+		t = field->type;
 	}
 	return s;
 }
@@ -3777,7 +3926,7 @@ gb_internal EscapePath escape_path_widen(EscapePath const &p) {
 			continue;
 		}
 		for (isize j = segment; j < i; j++) {
-			if (p[j].kind == p[i].kind && p[j].field == p[i].field) {
+			if (escape_step_eq(p[j], p[i])) {
 				return slice(p, 0, i);
 			}
 		}
