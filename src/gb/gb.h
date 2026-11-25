@@ -5398,7 +5398,7 @@ gbFileError gb_file_truncate(gbFile *f, i64 size) {
 	gbFileError err = gbFileError_None;
 	i64 prev_offset = gb_file_tell(f);
 	gb_file_seek(f, size);
-	if (!SetEndOfFile(f)) {
+	if (!SetEndOfFile(cast(HANDLE)f->fd.p)) {
 		err = gbFileError_TruncationFailure;
 	}
 	gb_file_seek(f, prev_offset);
