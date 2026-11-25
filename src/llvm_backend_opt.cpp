@@ -478,6 +478,60 @@ gb_internal void lb_run_remove_unused_globals_pass(lbModule *m) {
 	}
 }
 
+// NOTE: radlink drops every section whose size is 0, then refuses each relocation against a symbol in one with
+// "Error(031): relocating against symbol that is in a removed section". A global whose type has no size, such as
+// a variable of type `[0]T` or `struct{}`, or the data of an empty array literal whose address is taken, is such a
+// section. Each one is replaced by a one byte global with the same name, alignment, and attributes, so a reference
+// to it from any module relocates against a section the linker keeps.
+gb_internal void lb_give_zero_size_globals_storage(lbModule *m) {
+	TEMPORARY_ALLOCATOR_GUARD();
+
+	LLVMTargetDataRef data_layout = LLVMGetModuleDataLayout(m->mod);
+	LLVMTypeRef storage_type = llvm_array_type(LLVMInt8TypeInContext(m->ctx), 1);
+
+	for (LLVMValueRef global = LLVMGetFirstGlobal(m->mod); global != nullptr; /**/) {
+		LLVMValueRef curr_global = global;
+		global = LLVMGetNextGlobal(global);
+
+		LLVMTypeRef value_type = LLVMGlobalGetValueType(curr_global);
+		if (LLVMIsDeclaration(curr_global) || LLVMABISizeOfType(data_layout, value_type) != 0) {
+			continue;
+		}
+
+		unsigned address_space = LLVMGetPointerAddressSpace(LLVMTypeOf(curr_global));
+		LLVMValueRef storage = LLVMAddGlobalInAddressSpace(m->mod, storage_type, "", address_space);
+		LLVMSetInitializer(storage, LLVMConstNull(storage_type));
+		LLVMSetAlignment(storage, gb_max(LLVMGetAlignment(curr_global), LLVMABIAlignmentOfType(data_layout, value_type)));
+		LLVMSetLinkage(storage, LLVMGetLinkage(curr_global));
+		LLVMSetVisibility(storage, LLVMGetVisibility(curr_global));
+		LLVMSetDLLStorageClass(storage, LLVMGetDLLStorageClass(curr_global));
+		LLVMSetUnnamedAddress(storage, LLVMGetUnnamedAddress(curr_global));
+		LLVMSetThreadLocalMode(storage, LLVMGetThreadLocalMode(curr_global));
+		LLVMSetGlobalConstant(storage, LLVMIsGlobalConstant(curr_global));
+		LLVMSetExternallyInitialized(storage, LLVMIsExternallyInitialized(curr_global));
+		LLVMSetComdat(storage, LLVMGetComdat(curr_global));
+		char const *section = LLVMGetSection(curr_global);
+		if (section != nullptr && section[0] != 0) {
+			LLVMSetSection(storage, section);
+		}
+
+		size_t metadata_count = 0;
+		LLVMValueMetadataEntry *metadata = LLVMGlobalCopyAllMetadata(curr_global, &metadata_count);
+		for (unsigned i = 0; i < metadata_count; i++) {
+			LLVMGlobalSetMetadata(storage, LLVMValueMetadataEntriesGetKind(metadata, i), LLVMValueMetadataEntriesGetMetadata(metadata, i));
+		}
+		LLVMDisposeValueMetadataEntries(metadata);
+
+		String name = {};
+		name.text = cast(u8 *)LLVMGetValueName2(curr_global, cast(size_t *)&name.len);
+		name = copy_string(temporary_allocator(), name);
+
+		LLVMReplaceAllUsesWith(curr_global, storage);
+		LLVMDeleteGlobal(curr_global);
+		LLVMSetValueName2(storage, cast(char const *)name.text, name.len);
+	}
+}
+
 // NOTE(bill, 2026-10-03)
 //
 // LLVM's fast instruction selector cannot select a first class aggregate `load`, `store`, `insertvalue`, or `select`,
