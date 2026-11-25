@@ -2217,9 +2217,8 @@ pivot_root :: proc "contextless" (new_root: cstring, old_root: cstring) -> (Errn
 	Operations on a process or thread
 	Available since Linux 2.1.57
 */
-prctl :: proc "contextless" (op: i32, args: ..uint) -> (Errno) {
-	assert_contextless(len(args) <= 4)
-	ret := syscall(SYS_prctl, op, args[0], args[1], args[2], args[3])
+prctl :: proc "contextless" (op: i32, arg2: uint = 0, arg3: uint = 0, arg4: uint = 0, arg5: uint = 0) -> (Errno) {
+	ret := syscall(SYS_prctl, op, arg2, arg3, arg4, arg5)
 	return Errno(-ret)
 }
 
