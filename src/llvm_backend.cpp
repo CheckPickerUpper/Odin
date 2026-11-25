@@ -4276,6 +4276,14 @@ gb_internal bool lb_generate_code(lbGenerator *gen) {
 	TIME_SECTION("LLVM Remove Unused Functions and Globals");
 	lb_remove_unused_functions_and_globals(gen);
 
+	if (build_context.metrics.os == TargetOs_windows) {
+		// NOTE: a Windows object may be linked by radlink, which drops the empty section of a zero-size global
+		TIME_SECTION("LLVM Give Zero-Size Globals Storage");
+		for (auto const &entry : gen->modules) {
+			lb_give_zero_size_globals_storage(entry.value);
+		}
+	}
+
 	TIME_SECTION("LLVM Module Pass and Verification");
 	lb_llvm_module_passes_and_verification(gen, do_threading);
 
