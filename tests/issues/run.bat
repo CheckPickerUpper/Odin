@@ -215,7 +215,7 @@ type doc_test_imported.txt | find "Error: Testing procedures must have a signatu
 	exit /b 1
 )
 type doc_test_unused.txt | find /c "Error:" | findstr /x "1" || exit /b
-type doc_test_unused.txt | findstr /r /c:"Error: 'unused_helper' declared but not used *$" | find /c "Error:" | findstr /x "1" || exit /b
+type doc_test_unused.txt | more | findstr /r /c:"Error: 'unused_helper' declared but not used *$" | find /c "Error:" | findstr /x "1" || exit /b
 %ODIN% doc "..\test_doc_test_context\primary" -all-packages -define:DOC_TEST_UNUSED=true %COMMON% %DOC_TEST_FLAGS% > doc_test_plain.out 2> doc_test_plain.txt
 @if !ERRORLEVEL! neq 1 (
 	type doc_test_plain.out
@@ -224,7 +224,7 @@ type doc_test_unused.txt | findstr /r /c:"Error: 'unused_helper' declared but no
 )
 @for %%F in (doc_test_plain.out) do @if %%~zF neq 0 exit /b 1
 type doc_test_plain.txt | find /c "Error:" | findstr /x "1" || exit /b
-type doc_test_plain.txt | findstr /r /c:"Error: 'unused_helper' declared but not used *$" | find /c "Error:" | findstr /x "1" || exit /b
+type doc_test_plain.txt | more | findstr /r /c:"Error: 'unused_helper' declared but not used *$" | find /c "Error:" | findstr /x "1" || exit /b
 @if exist test_unused_local.odin-doc (
 	del /Q test_unused_local.odin-doc || exit /b
 )
@@ -234,7 +234,7 @@ type doc_test_plain.txt | findstr /r /c:"Error: 'unused_helper' declared but not
 	exit /b 1
 )
 type doc_test_unused_local.txt | find /c "Error:" | findstr /x "1" || exit /b
-type doc_test_unused_local.txt | findstr /r /c:"Error: 'unused_local' declared but not used *$" | find /c "Error:" | findstr /x "1" || exit /b
+type doc_test_unused_local.txt | more | findstr /r /c:"Error: 'unused_local' declared but not used *$" | find /c "Error:" | findstr /x "1" || exit /b
 type doc_test_unused_local.txt | find "instantiated as 'use_local(" > nul || exit /b
 %ODIN% doc "..\test_doc_test_context\primary" -all-packages -define:DOC_TEST_UNUSED_LOCAL=true %COMMON% %DOC_TEST_FLAGS% > doc_test_plain_local.out 2> doc_test_plain_local.txt
 @if !ERRORLEVEL! neq 1 (
@@ -244,7 +244,7 @@ type doc_test_unused_local.txt | find "instantiated as 'use_local(" > nul || exi
 )
 @for %%F in (doc_test_plain_local.out) do @if %%~zF neq 0 exit /b 1
 type doc_test_plain_local.txt | find /c "Error:" | findstr /x "1" || exit /b
-type doc_test_plain_local.txt | findstr /r /c:"Error: 'unused_local' declared but not used *$" | find /c "Error:" | findstr /x "1" || exit /b
+type doc_test_plain_local.txt | more | findstr /r /c:"Error: 'unused_local' declared but not used *$" | find /c "Error:" | findstr /x "1" || exit /b
 type doc_test_plain_local.txt | find "instantiated as 'use_local(" > nul || exit /b
 @if exist test_type_error.odin-doc (
 	del /Q test_type_error.odin-doc || exit /b
