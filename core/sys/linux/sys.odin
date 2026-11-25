@@ -2215,11 +2215,13 @@ pivot_root :: proc "contextless" (new_root: cstring, old_root: cstring) -> (Errn
 
 /*
 	Operations on a process or thread
+	Returns the operation's result, such as the dumpable flag for PR_GET_DUMPABLE;
+	most operations return 0.
 	Available since Linux 2.1.57
 */
-prctl :: proc "contextless" (op: i32, arg2: uint = 0, arg3: uint = 0, arg4: uint = 0, arg5: uint = 0) -> (Errno) {
+prctl :: proc "contextless" (op: i32, arg2: uint = 0, arg3: uint = 0, arg4: uint = 0, arg5: uint = 0) -> (result: int, err: Errno) {
 	ret := syscall(SYS_prctl, op, arg2, arg3, arg4, arg5)
-	return Errno(-ret)
+	return errno_unwrap(ret, int)
 }
 
 when ODIN_ARCH == .amd64 || ODIN_ARCH == .i386 {
