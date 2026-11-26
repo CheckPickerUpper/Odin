@@ -5397,7 +5397,12 @@ gb_inline i64 gb_file_size(gbFile *f) {
 gbFileError gb_file_truncate(gbFile *f, i64 size) {
 	gbFileError err = gbFileError_None;
 	i64 prev_offset = gb_file_tell(f);
-	gb_file_seek(f, size);
+	LARGE_INTEGER end_offset;
+	end_offset.QuadPart = size;
+	// SetEndOfFile cuts at the file pointer, so a seek that failed would cut at the old offset.
+	if (!SetFilePointerEx(cast(HANDLE)f->fd.p, end_offset, NULL, FILE_BEGIN)) {
+		return gbFileError_TruncationFailure;
+	}
 	if (!SetEndOfFile(cast(HANDLE)f->fd.p)) {
 		err = gbFileError_TruncationFailure;
 	}
