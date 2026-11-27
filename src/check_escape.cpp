@@ -5418,8 +5418,8 @@ gb_internal Slice<EscapeFlow> escape_analyse(EscapeGraph *g, i32 v, Array<Escape
 	}
 	global_error_context.instantiations = prev_instantiations;
 
-	// past ESCAPE_MAX_GLOBAL_WRITES writes to globals, the writes to the fields of one become a write to all of it, and past
-	// as many globals or writes through their pointers, one write to any global
+	// past ESCAPE_MAX_GLOBAL_WRITES writes to globals, the writes to the fields of one become a write to all of it, and once
+	// those whole globals and the writes through their pointers together pass it, one write to any global
 	isize global_writes = 0;
 	isize whole_writes  = 0; // other than through a pointer in the global
 	for (EscapeFlow const &f : ea.flows) {
@@ -5433,19 +5433,17 @@ gb_internal Slice<EscapeFlow> escape_analyse(EscapeGraph *g, i32 v, Array<Escape
 	bool any_global = ea.writes_any_global;
 	auto whole_globals = array_make<Entity *>(temporary_allocator(), 0, 0); // written to, other than through a pointer in it
 	if (!any_global && global_writes > ESCAPE_MAX_GLOBAL_WRITES) {
-		auto globals = array_make<Entity *>(temporary_allocator(), 0, 0);
 		isize deref_writes = 0;
 		for (EscapeFlow const &f : ea.flows) {
 			if (f.kind != EscapeFlow_Write || f.target != EscapeFlowTarget_Outer) {
 				continue;
 			}
-			escape_add_unique(&globals, f.global);
 			if (escape_path_deref_index(f.target_path) < f.target_path.count) {
 				deref_writes++;
 			} else {
 				escape_add_unique(&whole_globals, f.global);
 			}
-			if (globals.count > ESCAPE_MAX_GLOBAL_WRITES || deref_writes > ESCAPE_MAX_GLOBAL_WRITES) {
+			if (whole_globals.count + deref_writes > ESCAPE_MAX_GLOBAL_WRITES) {
 				any_global = true;
 				break;
 			}
